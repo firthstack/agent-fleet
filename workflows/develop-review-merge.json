@@ -1,0 +1,141 @@
+{
+  "workflow": "develop-review-merge",
+  "version": 1,
+  "description": "Implement a requirement, review it, revise until approved, then ask a human to merge.",
+
+  "dedupeBy": ["source.type", "source.ref"],
+
+  "vars": {
+    "requirement": { "from": "input.requirement", "required": true },
+    "issueUrl": {
+      "from": "input.issueUrl",
+      "else": {
+        "regex": "https?://github\\.com/[\\w.-]+/[\\w.-]+/issues/\\d+",
+        "over": "vars.requirement"
+      }
+    },
+    "prUrl": { "from": "input.prUrl", "init": null },
+    "reviewUrl": { "init": null },
+    "iteration": { "init": 0 },
+    "findings": { "init": [] }
+  },
+
+  "limits": { "maxIterations": 7 },
+
+  "start": [
+    { "when": "vars.prUrl != null", "goto": "pr_opened" },
+    { "goto": "developing" }
+  ],
+
+  "states": {
+    "developing": {
+      "status": "developing",
+      "call": {
+        "skill": "develop.issue",
+        "payload": {
+          "requirement": "{{vars.requirement}}",
+          "issueUrl": "{{vars.issueUrl}}",
+          "iteration": "{{vars.iteration}}"
+        }
+      },
+      "next": [
+        {
+          "when": "result.ok && result.prUrl",
+          "set": { "prUrl": "{{result.prUrl}}" },
+          "goto": "pr_opened"
+        },
+        { "fail": "develop_failed" }
+      ]
+    },
+
+    "pr_opened": {
+      "status": "pr_opened",
+      "next": [{ "goto": "reviewing" }]
+    },
+
+    "reviewing": {
+      "status": "reviewing",
+      "call": {
+        "skill": "review.pr",
+        "payload": {
+          "prUrl": "{{vars.prUrl}}",
+          "requirement": "{{vars.requirement}}",
+          "iteration": "{{vars.iteration}}"
+        }
+      },
+      "set": { "reviewUrl": "{{result.reviewUrl ?? vars.reviewUrl}}" },
+      "next": [
+        { "when": "!result.ok || !result.verdict", "fail": "review_failed" },
+        { "when": "result.verdict == 'approved'", "goto": "requesting_merge" },
+        { "when": "result.verdict == 'comment'", "escalate": "review_comment" },
+        {
+          "when": "result.verdict == 'request_changes'",
+          "set": { "findings": "{{result.findings ?? []}}" },
+          "goto": "changes_requested"
+        },
+        { "fail": "review_failed" }
+      ]
+    },
+
+    "requesting_merge": {
+      "status": "merge_requested",
+      "call": {
+        "skill": "pr.merge",
+        "payload": {
+          "prUrl": "{{vars.prUrl}}",
+          "reviewUrl": "{{vars.reviewUrl}}",
+          "workflowRunId": "{{'' + run.id}}",
+          "reason": "codex review passed; external approval required before merge"
+        }
+      },
+      "next": [
+        { "when": "result.ok", "goto": "completed" },
+        { "fail": "merge_request_failed" }
+      ]
+    },
+
+    "changes_requested": {
+      "status": "changes_requested",
+      "set": { "iteration": "{{vars.iteration + 1}}" },
+      "next": [
+        {
+          "when": "vars.iteration >= limits.maxIterations",
+          "escalate": "max_iterations_exceeded"
+        },
+        { "goto": "revising" }
+      ]
+    },
+
+    "revising": {
+      "status": "revising",
+      "call": {
+        "skill": "develop.revise",
+        "payload": {
+          "requirement": "{{vars.requirement}}",
+          "priorPrUrl": "{{vars.prUrl}}",
+          "iteration": "{{vars.iteration}}",
+          "reviewFindings": "{{vars.findings}}"
+        }
+      },
+      "next": [
+        {
+          "when": "result.ok && result.prUrl",
+          "set": { "prUrl": "{{result.prUrl}}" },
+          "goto": "pr_opened"
+        },
+        { "fail": "develop_failed" }
+      ]
+    }
+  },
+
+  "resume": [
+    {
+      "when": "run.status == 'reviewing' && vars.prUrl != null",
+      "goto": "reviewing"
+    },
+    {
+      "when": "run.status == 'failed' && run.reason == 'develop_failed' && vars.prUrl == null",
+      "goto": "developing"
+    }
+  ]
+}

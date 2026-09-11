@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.env
+.env.local
+*.log
+coverage/
+.DS_Store
+
+# Compiled test artifacts (tsx emits these during test runs)
+test/**/*.js
+test/**/*.js.map
+
+# Local agent credentials
+.insta/agent-session.json
+.insta/observe/
+.insta/audit.jsonl
+.insta/.agent-session-*.tmp
