@@ -908,6 +908,18 @@ export class GatewayStore {
     return rows.map((r) => r.agent_id);
   }
 
+  /**
+   * Same bypass as above, but full records — what the health-check sweep
+   * (docs §5 step 5) needs to re-fetch each agent's card and write back its
+   * health, across every tenant, from a single background loop.
+   */
+  async listAllAgentsUnscoped(): Promise<GatewayAgentRecord[]> {
+    const { rows } = await this.pool.query<AgentRow>(
+      `SELECT ${AGENT_COLUMNS} FROM fleet_agents`,
+    );
+    return rows.map(toAgent);
+  }
+
   /** The composition layer's store, sharing this pool and tenant context. */
   workflows(): WorkflowStore {
     return new WorkflowStore({

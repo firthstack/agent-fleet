@@ -313,6 +313,60 @@ describe("fleet workers", () => {
     workers.stop();
     expect(order).toEqual(["sweep", "notify"]);
   });
+
+  it("does not run a health sweep when no healthCheck config is given", async () => {
+    const store = {
+      async claimExpired() { return []; },
+      async claimDueNotifications() { return []; },
+      async appendTaskEvent() {},
+      async resolveCallbackToken() { return null; },
+      async recordDownstreamResult() {},
+      async markNotified() {},
+      async recordNotifyFailure() {},
+      async abandonNotification() {},
+    };
+
+    const workers = startFleetWorkers({ store, intervalMs: 1_000_000 });
+    workers.stop();
+    expect(workers.runHealthCheckOnce).toBeUndefined();
+  });
+
+  it("refreshes every agent across every tenant on the health-check tick (docs §5 step 5)", async () => {
+    const refreshed: string[] = [];
+    const store = {
+      async claimExpired() { return []; },
+      async claimDueNotifications() { return []; },
+      async appendTaskEvent() {},
+      async resolveCallbackToken() { return null; },
+      async recordDownstreamResult() {},
+      async markNotified() {},
+      async recordNotifyFailure() {},
+      async abandonNotification() {},
+    };
+    const healthStore = {
+      async listAllAgentsUnscoped() {
+        return [DEV, { ...DEV, tenantId: 2, agentId: "other-agent" }];
+      },
+    };
+
+    const workers = startFleetWorkers({
+      store,
+      intervalMs: 1_000_000,
+      healthCheck: {
+        store: healthStore,
+        intervalMs: 1_000_000,
+        async refresh(agent) {
+          refreshed.push(agent.agentId);
+          return { health: "healthy", changed: false };
+        },
+      },
+    });
+
+    const result = await workers.runHealthCheckOnce?.();
+    workers.stop();
+    expect(result).toEqual({ checked: 2, unreachable: 0 });
+    expect(refreshed).toEqual(["dev-agent", "other-agent"]);
+  });
 });
 
 describe("fleetPublicBaseUrlFromEnv", () => {

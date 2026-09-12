@@ -11,7 +11,8 @@ import {
 } from "./gateway.js";
 import type { CallbackStorePort } from "./callbacks.js";
 import type { AgentCredential } from "./a2aClient.js";
-import { hashToken } from "./registration.js";
+import { createHealthSweeper, hashToken, type HealthSweepStorePort } from "./registration.js";
+import type { GatewayAgentRecord } from "./gatewayStore.js";
 import type { SecretBox } from "./secretBox.js";
 import { createStaticHandler } from "./staticFiles.js";
 import type { IncomingMessage as NodeRequest, ServerResponse as NodeResponse } from "node:http";
@@ -217,6 +218,8 @@ export interface FleetWorkerHandle {
   stop(): void;
   /** Exposed so tests can drive a tick without waiting on a timer. */
   runOnce(): Promise<void>;
+  /** Present only when `healthCheck` was configured; drives one sweep tick. */
+  runHealthCheckOnce?(): Promise<{ checked: number; unreachable: number }>;
 }
 
 /**
@@ -228,6 +231,20 @@ export function startFleetWorkers(opts: {
   store: CallbackStorePort;
   /** Advances composition-layer runs whose step just finished. */
   workflowDriver?: { runOnce(): Promise<{ advanced: number; retried: number; abandoned: number }> };
+  /**
+   * Drives the registration health sweep (docs §5 step 5). Omit it and agent
+   * health is only ever written once, at registration — `refresh()` exists
+   * but nothing calls it, so a dead agent reads "healthy" forever.
+   */
+  healthCheck?: {
+    store: HealthSweepStorePort;
+    refresh(
+      agent: GatewayAgentRecord,
+    ): Promise<{ health: "healthy" | "unreachable"; changed: boolean }>;
+    /** Separate from `intervalMs`: re-fetching every agent's card is far more
+     *  expensive than a DB sweep, so it defaults to a much slower cadence. */
+    intervalMs?: number;
+  };
   logger?: FleetSiteLogger;
   intervalMs?: number;
   now?(): Date;
@@ -279,12 +296,42 @@ export function startFleetWorkers(opts: {
   // Never hold the process open just for the sweep timer.
   timer.unref?.();
 
+  let healthTimer: NodeJS.Timeout | undefined;
+  let runHealthCheckOnce: (() => Promise<{ checked: number; unreachable: number }>) | undefined;
+  if (opts.healthCheck) {
+    const healthCheck = opts.healthCheck;
+    const sweepHealth = createHealthSweeper({
+      store: healthCheck.store,
+      refresh: healthCheck.refresh,
+    });
+    runHealthCheckOnce = async () => {
+      const result = await sweepHealth();
+      if (result.unreachable > 0) {
+        opts.logger?.info(result, "fleet gateway health sweep found unreachable agents");
+      }
+      return result;
+    };
+    healthTimer = setInterval(() => {
+      if (stopped) return;
+      runHealthCheckOnce!().catch((err) => {
+        opts.logger?.error(
+          { error: err instanceof Error ? err.message : String(err) },
+          "fleet gateway health sweep failed",
+        );
+      });
+    }, healthCheck.intervalMs ?? 5 * 60_000);
+    // Never hold the process open just for the health sweep timer.
+    healthTimer.unref?.();
+  }
+
   return {
     stop() {
       stopped = true;
       clearInterval(timer);
+      if (healthTimer) clearInterval(healthTimer);
     },
     runOnce,
+    ...(runHealthCheckOnce ? { runHealthCheckOnce } : {}),
   };
 }
 

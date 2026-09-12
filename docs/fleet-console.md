@@ -306,4 +306,4 @@ dist/web/       Vite 产出的前端资源
 - **Better Auth 的表怎么进迁移序列。** 它的 CLI 生成 schema，而我们的 `scripts/migrate.mjs` 是按文件顺序重放的。最简单是把生成的 SQL 落成一个编号迁移文件，代价是它升级时要手工同步。需要验证一遍流程。
 - **落地页要不要独立部署。** 放在同一个进程里最省事，但营销页和平台的发布节奏通常不同。
 - **一个用户多个租户。** 本期一对一。`fleet_tenant_members` 已经能表达多对多，但 UI、切换器、邀请流程都还没有。
-- **agent 健康状态的刷新由谁触发。** `registration.refresh()` 已经写好，但**没有任何调用方**——没有后台巡检（网关文档 §5 第 5 步只写了设计），也没有手动刷新端点。于是 health 只在注册那一刻写一次，`unreachable` / `stale` 实际上永远不会出现，agent 列表和 dashboard 上的健康标签是个恒为 `healthy` 的装饰。五期做完之后，这是最该接着做的一件事。
+- ~~agent 健康状态的刷新由谁触发~~：已解决。`startFleetWorkers` 新增 `healthCheck` 巡检循环，默认每 5 分钟对每个租户的每个 agent 调一次 `registration.refresh()`（`src/index.ts` 里接线），失联的 agent 现在会被标记 `unreachable`，不再永远停在注册时写入的 `healthy`。

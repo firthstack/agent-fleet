@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   assertValidAgentId,
+  createHealthSweeper,
   createRegistrationService,
   hashToken,
   newAgentToken,
@@ -309,6 +310,56 @@ describe("registration refresh", () => {
 
     expect(await svc.refresh(agent)).toEqual({ health: "healthy", changed: true });
     expect(f.agents[0].card.skills[0].id).toBe("review.pr2");
+  });
+});
+
+describe("createHealthSweeper", () => {
+  const healthy: GatewayAgentRecord = {
+    tenantId: 1,
+    agentId: "dev-agent",
+    displayName: "dev-agent",
+    endpointUrl: "https://dev.acme.example/",
+    card: validCard(),
+    health: "healthy",
+    cardFetchedAt: null,
+    lastSeenAt: null,
+  };
+  const other: GatewayAgentRecord = {
+    tenantId: 2,
+    agentId: "review-agent",
+    displayName: "review-agent",
+    endpointUrl: "https://review.globex.example/",
+    card: validCard(),
+    health: "healthy",
+    cardFetchedAt: null,
+    lastSeenAt: null,
+  };
+
+  it("refreshes every agent across every tenant, not just one", async () => {
+    const refreshed: GatewayAgentRecord[] = [];
+    const sweep = createHealthSweeper({
+      store: { async listAllAgentsUnscoped() { return [healthy, other]; } },
+      async refresh(agent) {
+        refreshed.push(agent);
+        return { health: "healthy", changed: false };
+      },
+    });
+
+    expect(await sweep()).toEqual({ checked: 2, unreachable: 0 });
+    expect(refreshed.map((a) => a.agentId)).toEqual(["dev-agent", "review-agent"]);
+  });
+
+  it("counts agents that go unreachable, so a stopped agent stops reading healthy forever", async () => {
+    const sweep = createHealthSweeper({
+      store: { async listAllAgentsUnscoped() { return [healthy, other]; } },
+      async refresh(agent) {
+        return agent.agentId === "dev-agent"
+          ? { health: "unreachable", changed: false }
+          : { health: "healthy", changed: false };
+      },
+    });
+
+    expect(await sweep()).toEqual({ checked: 2, unreachable: 1 });
   });
 });
 

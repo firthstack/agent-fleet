@@ -112,7 +112,17 @@ async function main(): Promise<void> {
       logger: log,
     }),
   });
-  const workers = startFleetWorkers({ store, workflowDriver: driver, logger: log });
+  const workers = startFleetWorkers({
+    store,
+    workflowDriver: driver,
+    logger: log,
+    // docs §5 step 5: without this, `registration.refresh()` never runs and
+    // every agent's health is frozen at whatever it was when registered.
+    healthCheck: {
+      store,
+      refresh: (agent) => registration.refresh(agent),
+    },
+  });
 
   await new Promise<void>((resolve) => server.listen(cfg.port, "0.0.0.0", resolve));
   log.info({ port: cfg.port, publicBaseUrl }, "fleet gateway listening");

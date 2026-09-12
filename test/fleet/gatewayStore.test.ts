@@ -379,4 +379,27 @@ describe("row level security", () => {
     // owner role deliberately keeps its bypass.
     expect((await store.listAllAgentIdsUnscoped()).sort()).toEqual(["a", "b"]);
   });
+
+  it("returns full agent records across tenants for the health-check sweep", async () => {
+    const acme = await store.ensureTenant({ slug: "acme", displayName: "Acme" });
+    const globex = await store.ensureTenant({ slug: "globex", displayName: "Globex" });
+    for (const [tenantId, agentId] of [
+      [acme.id, "a"],
+      [globex.id, "b"],
+    ] as const) {
+      await store.registerAgent({
+        tenantId,
+        agentId,
+        displayName: agentId,
+        endpointUrl: `https://${agentId}.example/`,
+        card: card(),
+      });
+    }
+
+    const all = await store.listAllAgentsUnscoped();
+    expect(all.map((a) => a.agentId).sort()).toEqual(["a", "b"]);
+    const acmeAgent = all.find((a) => a.agentId === "a");
+    expect(acmeAgent?.tenantId).toBe(acme.id);
+    expect(acmeAgent?.endpointUrl).toBe("https://a.example/");
+  });
 });

@@ -347,3 +347,30 @@ export function createRegistrationService(deps: RegistrationDeps) {
     },
   };
 }
+
+export interface HealthSweepStorePort {
+  listAllAgentsUnscoped(): Promise<GatewayAgentRecord[]>;
+}
+
+/**
+ * The background half of registration step 5 (docs §5): drives `refresh()`
+ * over every agent in every tenant. Without a caller for this, health is
+ * written once at registration and never again — an agent that goes down
+ * keeps reading "healthy" on the dashboard forever.
+ */
+export function createHealthSweeper(deps: {
+  store: HealthSweepStorePort;
+  refresh(
+    agent: GatewayAgentRecord,
+  ): Promise<{ health: "healthy" | "unreachable"; changed: boolean }>;
+}) {
+  return async function runOnce(): Promise<{ checked: number; unreachable: number }> {
+    const agents = await deps.store.listAllAgentsUnscoped();
+    let unreachable = 0;
+    for (const agent of agents) {
+      const result = await deps.refresh(agent);
+      if (result.health === "unreachable") unreachable += 1;
+    }
+    return { checked: agents.length, unreachable };
+  };
+}
