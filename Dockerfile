@@ -16,6 +16,10 @@ ENV NODE_ENV=production
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
+# Shipping an image is redistribution, and Apache 2.0 §4(a) asks that a copy of
+# the licence travel with it.
+COPY LICENSE ./
+
 COPY --from=build /app/dist ./dist
 # Migrations and their runner travel with the image so a deployed service can
 # apply them itself (`insta compute exec <service> -- npm run migrate`).

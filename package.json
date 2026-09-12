@@ -4,6 +4,12 @@
   "private": true,
   "type": "module",
   "description": "Multi-tenant A2A gateway and workflow composition layer for agent fleets.",
+  "license": "Apache-2.0",
+  "author": "Junwen Feng",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/firthstack/agent-fleet.git"
+  },
   "engines": {
     "node": ">=20"
   },

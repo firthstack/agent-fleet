@@ -251,6 +251,15 @@ registration and never refreshed (there is no background sweep yet), and a run
 whose very first dispatch fails — because no agent offers that skill — is
 created and then has no task to retry, so it sits in its first state.
 
+## License
+
+[Apache 2.0](LICENSE). Copyright 2026 Junwen Feng.
+
+Apache 2.0 rather than MIT for the patent grant: contributors grant a patent
+licence with their contribution, and that grant terminates for anyone who
+brings a patent suit over the work. For something meant to sit in the middle of
+other people's infrastructure, that is worth the extra paragraph.
+
 ## Design docs
 
 These carry the reasoning, and the deviations found while building:
