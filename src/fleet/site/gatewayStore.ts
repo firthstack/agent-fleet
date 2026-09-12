@@ -517,12 +517,28 @@ export class GatewayStore {
       }>(
         `SELECT target_agent_id,
            COUNT(*) AS total,
-           COUNT(*) FILTER (WHERE state IN ('done', 'done_pending_notify')) AS succeeded,
-           COUNT(*) FILTER (WHERE state IN ('failed', 'timed_out')) AS failed,
-           COUNT(*) FILTER (WHERE state IN ('dispatching', 'running')) AS running,
-           MIN(created_at) FILTER (WHERE state IN ('dispatching', 'running')) AS oldest_running
-         FROM fleet_tasks
-         WHERE tenant_id = $1 ${agentId ? "AND target_agent_id = $2" : ""}
+           COUNT(*) FILTER (WHERE outcome = 'succeeded') AS succeeded,
+           COUNT(*) FILTER (WHERE outcome = 'failed') AS failed,
+           COUNT(*) FILTER (WHERE outcome = 'running') AS running,
+           MIN(created_at) FILTER (WHERE outcome = 'running') AS oldest_running
+         FROM (
+           SELECT target_agent_id, created_at,
+             CASE
+               WHEN state IN ('dispatching', 'running') THEN 'running'
+               WHEN state IN ('failed', 'timed_out') THEN 'failed'
+               -- A callback can settle a task into done/done_pending_notify while
+               -- still reporting a downstream failure (result_json.state), so the
+               -- ledger state alone is not enough to call it a success. A missing
+               -- state (legacy rows, or callers that never set it) keeps the old
+               -- done-means-succeeded behaviour.
+               WHEN state IN ('done', 'done_pending_notify')
+                 AND result_json->>'state' IS NOT NULL
+                 AND result_json->>'state' <> 'completed' THEN 'failed'
+               WHEN state IN ('done', 'done_pending_notify') THEN 'succeeded'
+             END AS outcome
+           FROM fleet_tasks
+           WHERE tenant_id = $1 ${agentId ? "AND target_agent_id = $2" : ""}
+         ) t
          GROUP BY target_agent_id`,
         agentId ? [tenantId, agentId] : [tenantId],
       );

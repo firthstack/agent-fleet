@@ -368,6 +368,24 @@ describe("GatewayStore.agentTaskStats", () => {
     expect(stats.has("review-agent")).toBe(false);
   });
 
+  it("counts an agent-reported failure as failed, both before and after notification", async () => {
+    const acme = await seed();
+
+    const task = await store.createTask({ tenantId: acme.id, ...args("dev-agent", "up-agent-failed") });
+    await store.attachDownstream(task.id, { downstreamTaskId: "d1", callbackTokenHash: "h1" });
+    // Mirrors createCallbackHandler: the downstream reports failure, but
+    // recordDownstreamResult still lands the ledger on done_pending_notify.
+    await store.recordDownstreamResult(task.id, { state: "failed", result: null, error: "boom" });
+
+    let stats = await store.agentTaskStats(acme.id);
+    expect(stats.get("dev-agent")).toMatchObject({ totalRuns: 1, succeeded: 0, failed: 1, running: 0 });
+
+    await store.markNotified(task.id);
+
+    stats = await store.agentTaskStats(acme.id);
+    expect(stats.get("dev-agent")).toMatchObject({ totalRuns: 1, succeeded: 0, failed: 1, running: 0 });
+  });
+
   it("scopes to one agent when an agentId is given, without pulling in the tenant's other agents", async () => {
     const acme = await seed();
     await store.createTask({ tenantId: acme.id, ...args("dev-agent", "up-1") });

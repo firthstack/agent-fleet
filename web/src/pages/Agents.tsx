@@ -11,7 +11,7 @@ function AgentStats({ stats }: { stats: Agent["stats"] }) {
     return <p className="row-sub">no runs yet</p>;
   }
   return (
-    <p className="row-sub agent-stats">
+    <p className="row-sub agent-stats" title="Snapshot as of page load — refresh to update">
       <span>{stats.totalRuns} run{stats.totalRuns === 1 ? "" : "s"}</span>
       {stats.succeeded > 0 ? <span className="pill ok">{stats.succeeded} ok</span> : null}
       {stats.failed > 0 ? <span className="pill bad">{stats.failed} failed</span> : null}
