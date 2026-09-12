@@ -6,7 +6,6 @@ import {
   resumeRun,
   startRun,
   validateDefinition,
-  WorkflowError,
   type Decision,
   type RunSnapshot,
   type WorkflowDefinition,
@@ -117,17 +116,32 @@ describe("entry points", () => {
   });
 
   it("skips development and reviews straight away when given a PR", () => {
-    // The old workflow.review_pr entry point.
-    const first = expectCall(
-      startRun(def, { requirement: "Review submitted PR", prUrl: PR }),
-      "review.pr",
-    );
+    // The old workflow.review_pr entry point, which took prUrl alone and
+    // synthesised the requirement rather than demanding one.
+    const first = expectCall(startRun(def, { prUrl: PR }), "review.pr");
     expect(first.state).toBe("reviewing");
     expect(first.payload.prUrl).toBe(PR);
+    expect(first.payload.requirement).toBe(`Review submitted PR ${PR}`);
   });
 
-  it("refuses a dispatch with no requirement", () => {
-    expect(() => startRun(def, { prUrl: PR })).toThrow(WorkflowError);
+  it("still takes an explicit requirement alongside the PR", () => {
+    const first = expectCall(
+      startRun(def, { requirement: "tighten the retry window", prUrl: PR }),
+      "review.pr",
+    );
+    expect(first.payload.requirement).toBe("tighten the retry window");
+  });
+
+  it("refuses a dispatch with neither a requirement nor a PR", () => {
+    // The synthesised requirement must not paper over an empty request:
+    // without the start guard this would run develop.issue on the string
+    // "Review submitted PR ".
+    const decision = startRun(def, {});
+    expect(decision).toMatchObject({
+      kind: "terminal",
+      state: "failed",
+      reason: "no_requirement",
+    });
   });
 });
 

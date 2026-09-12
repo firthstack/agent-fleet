@@ -6,7 +6,12 @@
   "dedupeBy": ["source.type", "source.ref"],
 
   "vars": {
-    "requirement": { "from": "input.requirement", "required": true },
+    "requirement": {
+      "from": "input.requirement",
+      "else": "Review submitted PR {{vars.prUrl}}",
+      "required": true
+    },
+    "givenRequirement": { "from": "input.requirement", "init": null },
     "issueUrl": {
       "from": "input.issueUrl",
       "else": {
@@ -23,6 +28,10 @@
   "limits": { "maxIterations": 7 },
 
   "start": [
+    {
+      "when": "vars.givenRequirement == null && vars.prUrl == null",
+      "fail": "no_requirement"
+    },
     { "when": "vars.prUrl != null", "goto": "pr_opened" },
     { "goto": "developing" }
   ],
