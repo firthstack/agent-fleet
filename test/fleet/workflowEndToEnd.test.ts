@@ -206,6 +206,8 @@ async function setUpFleet(opts: {
   reviewVerdicts?: Array<"approved" | "request_changes" | "comment">;
   developOk?: boolean;
   mergeOk?: boolean;
+  /** Leave the merge agent unregistered, so `pr.merge` has nowhere to go. */
+  withMergeAgent?: boolean;
 }) {
   await startGateway();
 
@@ -263,7 +265,9 @@ async function setUpFleet(opts: {
 
   await registerAgent("dev-agent", dev.url, devToken, ["develop.issue", "develop.revise"]);
   await registerAgent("review-agent", review.url, reviewToken, ["review.pr"]);
-  await registerAgent("pr-merge-agent", merge.url, mergeToken, ["pr.merge"]);
+  if (opts.withMergeAgent !== false) {
+    await registerAgent("pr-merge-agent", merge.url, mergeToken, ["pr.merge"]);
+  }
 
   // A caller identity for the HTTP API.
   callerToken = `fleet_${randomBytes(16).toString("hex")}`;
@@ -319,6 +323,49 @@ describe("the whole fleet, over real HTTP", () => {
       "reviewing",
       "requesting_merge",
       "completed",
+    ]);
+  }, 60_000);
+
+it("fails the run when a step names a skill no agent offers", async () => {
+    // The real incident this comes from: develop and review both succeed, and
+    // then `requesting_merge` calls `pr.merge`, which nothing in the tenant
+    // provides.
+    //
+    // What used to happen: the run row is written before the dispatch, so the
+    // run moved to `requesting_merge` and the dispatch then threw. That threw
+    // onto the retry path, which rewrote the same state five times over eight
+    // minutes and gave up. No task row was ever created for the step — the
+    // dispatcher refuses before creating one — and the deadline sweep only
+    // looks at `fleet_tasks`, so nothing afterwards could ever move the run.
+    // It sat in a live-looking `requesting_merge` forever.
+    const fleet = await setUpFleet({
+      reviewVerdicts: ["approved"],
+      withMergeAgent: false,
+    });
+
+    const started = await startRun();
+    const runId = (started.body as { run: { id: number } }).run.id;
+
+    const run = await settle(runId);
+
+    expect(run).toMatchObject({ state: "failed", status: "failed" });
+    // The reason names the skill, which is the one thing that says what to do.
+    expect(run?.reason).toContain("pr.merge");
+    // It got all the way through the work that could be done.
+    expect(fleet.developCalls()).toBe(1);
+    expect(fleet.reviewCalls()).toBe(1);
+
+    const events = await api(`/a2a/t/acme/workflows/runs/${runId}/events`);
+    const types = (events.body as { events: Array<{ eventType: string }> }).events.map(
+      (e) => e.eventType,
+    );
+    expect(types).toEqual([
+      "created",
+      "developing",
+      "pr_opened",
+      "reviewing",
+      "requesting_merge",
+      "failed",
     ]);
   }, 60_000);
 

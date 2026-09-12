@@ -12,7 +12,7 @@ import {
 import type { ConsoleMessenger } from "../../src/fleet/console/api.js";
 import type { WorkflowRunRecord } from "../../src/fleet/workflow/driver.js";
 import { WorkflowDriverError } from "../../src/fleet/workflow/driver.js";
-import { WorkflowDispatchError } from "../../src/fleet/workflow/dispatcher.js";
+import { WorkflowDispatchError, WorkflowRunFailed } from "../../src/fleet/workflow/driver.js";
 import { WorkflowError } from "../../src/fleet/workflow/engine.js";
 import type { WorkflowDefinition } from "../../src/fleet/workflow/engine.js";
 import type { GatewayAgentRecord, TenantRecord } from "../../src/fleet/site/gatewayStore.js";
@@ -645,10 +645,10 @@ describe("console workflows", () => {
     expect(res.body.message).toContain("requirement");
   });
 
-  it("names the missing skill when no agent offers the first step", async () => {
+  it("names the missing skill, and the run the driver ended over it", async () => {
     const h = await harness();
     h.throwOnStart(
-      new WorkflowDispatchError("no agent in this tenant offers dev.implement", "no_agent"),
+      new WorkflowRunFailed(12, "no_agent", "no agent in this tenant offers dev.implement"),
     );
 
     const res = await h.call("/api/workflows/develop-review-merge/runs", {
@@ -660,8 +660,27 @@ describe("console workflows", () => {
     expect(res.body.error).toBe("no_agent");
     // The skill id is the actionable part: it says which agent to connect.
     expect(res.body.message).toContain("dev.implement");
-    // The run row is already written by the time dispatch fails, so the page
-    // has to be told one exists rather than reporting a clean failure.
+    // The run exists and is already terminal, so the page can point at it
+    // rather than leaving a row in the list with no explanation.
+    expect(res.body.runId).toBe(12);
+    expect(res.body.runState).toBe("failed");
+  });
+
+  it("reports an unreachable agent as an upstream failure, not the caller's fault", async () => {
+    const h = await harness();
+    h.throwOnStart(
+      new WorkflowDispatchError("dispatching to dev-agent failed: ECONNREFUSED", "dispatch_failed"),
+    );
+
+    const res = await h.call("/api/workflows/develop-review-merge/runs", {
+      method: "POST",
+      body: JSON.stringify({ payload: {} }),
+    });
+
+    // Worth another try, unlike a skill nothing offers — but nothing retries
+    // a *first* step, so the run is created and stays where it is.
+    expect(res.status).toBe(502);
+    expect(res.body.error).toBe("dispatch_failed");
     expect(res.body.strandedRun).toBe(true);
   });
 

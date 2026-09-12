@@ -356,6 +356,20 @@ created → developing → pr_opened → reviewing → changes_requested
 
 所以任务上记了 `workflow_from_state`，推进一律以它为准。run 的状态回归纯观察用途。
 
+**但"派发失败就重试"这条只对一部分失败成立。** `WorkflowDispatchError` 有三个码，重试价值完全不同：
+
+| 码 | 含义 | 重试有用吗 |
+|---|---|---|
+| `dispatch_failed` | agent 不可达、请求超时 | **有** —— 同一次派发过一会儿可能就成了 |
+| `no_agent` | 租户里没有任何 agent 提供这个技能 | 没有 |
+| `ambiguous_agent` | 多个 agent 提供，而定义没指名 | 没有 |
+
+后两个此前也走重试路径，代价是一个真实事故：run 卡在 `requesting_merge`，因为 `pr.merge` 没有对应的 agent。run 行在派发**之前**已经写进去了，于是它前进了一格；派发抛错后重试把同一个状态重写了 5 次、约 8 分钟，然后放弃。而**这一步压根没有 task 行**——dispatcher 在 `createTask` 之前就抛了——超时清扫又只看 `fleet_tasks`，所以放弃之后再没有任何东西能推动它。它永远停在一个看起来还活着的状态上。
+
+现在这两个码直接把 run 判为 `failed`，`reason` 写成点名了技能的那句话，并抛 `WorkflowRunFailed` 让驱动它的那个 task 退出认领队列（否则它会被反复认领、以同样方式一路失败到尝试上限）。时间线仍然记下它到达过的状态，再记 `failed`——run 确实进入过那一格，看不见它等于隐瞒了它走到哪。
+
+遗留：`start()` 里的 `dispatch_failed` 仍会搁浅。首步没有 task 行可供重试，所以它和上面的情形一样无人接手，只是原因是暂时性的。
+
 ### 7.3 重放的完成回调必须是空操作
 
 网关是至少一次投递，同一个完成可能到两次。第二次推进会再派发一次下一步——**一个需求开出两个 PR**。

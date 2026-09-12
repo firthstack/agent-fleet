@@ -1,9 +1,11 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  WorkflowDispatchError,
+  WorkflowDriverError,
+  WorkflowRunFailed,
   createWorkflowDriver,
   stepResult,
-  WorkflowDriverError,
   type WorkflowDriverStore,
   type WorkflowRunRecord,
   type WorkflowTaskRecord,
@@ -33,7 +35,14 @@ interface Dispatched {
   workflowRunId: number;
 }
 
-function harness(opts: { dispatchFails?: number; failFrom?: number } = {}) {
+function harness(
+  opts: {
+    dispatchFails?: number;
+    failFrom?: number;
+    /** Injected failures carry this code instead of being a generic error. */
+    dispatchCode?: "no_agent" | "ambiguous_agent" | "dispatch_failed";
+  } = {},
+) {
   const runs = new Map<number, WorkflowRunRecord>();
   const tasks = new Map<number, WorkflowTaskRecord>();
   const events: Array<{ runId: number; eventType: string }> = [];
@@ -133,7 +142,10 @@ function harness(opts: { dispatchFails?: number; failFrom?: number } = {}) {
         dispatchCount += 1;
         if (dispatchFailuresLeft > 0 && dispatchCount > failFrom) {
           dispatchFailuresLeft -= 1;
-          throw new Error("no agent offers that skill");
+          const message = `no agent in this tenant offers ${input.skillId}`;
+          throw opts.dispatchCode
+            ? new WorkflowDispatchError(message, opts.dispatchCode)
+            : new Error(message);
         }
         const taskId = nextTaskId++;
         dispatched.push({ taskId, ...input });
@@ -222,7 +234,7 @@ describe("driving the real workflow end to end", () => {
     ]);
     // Every step was marked handled, so nothing is reclaimed on the next pass.
     expect(h.notified).toHaveLength(3);
-    expect(await h.driver.runOnce()).toEqual({ advanced: 0, retried: 0, abandoned: 0 });
+    expect(await h.driver.runOnce()).toEqual({ advanced: 0, retried: 0, abandoned: 0, failed: 0 });
   });
 
   it("loops through revision and comes back to review with the new PR", async () => {
@@ -466,5 +478,106 @@ describe("stepResult", () => {
 
   it("does not pretend an empty result succeeded", () => {
     expect(stepResult(base)).toMatchObject({ ok: false });
+  });
+});
+
+describe("a step that can never be dispatched", () => {
+  /**
+   * The bug this replaces: the run row is written *before* the dispatch, so a
+   * failure left the run one state ahead with no task behind it. Retrying
+   * rewrote that same state until the attempt cap, then gave up — and because
+   * the deadline sweep only looks at `fleet_tasks`, and no task row was ever
+   * created, nothing afterwards could move the run again. It sat in a
+   * live-looking state forever.
+   */
+
+  it("ends the run instead of retrying, and says which skill had nowhere to go", async () => {
+    const h = harness({ dispatchFails: 1, dispatchCode: "no_agent" });
+
+    await expect(startFeature(h)).rejects.toBeInstanceOf(WorkflowRunFailed);
+
+    const run = [...h.runs.values()][0];
+    expect(run.state).toBe("failed");
+    expect(run.status).toBe("failed");
+    // The skill is the actionable part: it names the agent to connect.
+    expect(run.reason).toContain("develop.issue");
+    expect(h.events.filter((e) => e.eventType === "failed")).toHaveLength(1);
+  });
+
+  it("carries the run id, because that run is in the list needing an explanation", async () => {
+    const h = harness({ dispatchFails: 1, dispatchCode: "no_agent" });
+    const err = await startFeature(h).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(WorkflowRunFailed);
+    expect((err as WorkflowRunFailed).runId).toBe([...h.runs.values()][0].id);
+    expect((err as WorkflowRunFailed).code).toBe("no_agent");
+  });
+
+  it("fails a run that breaks mid-flight, not only one that breaks at the start", async () => {
+    // The shape of the real incident: develop and review succeed, then the
+    // merge step names a skill nothing offers.
+    const h = harness({ dispatchFails: 1, failFrom: 1, dispatchCode: "no_agent" });
+    await startFeature(h);
+
+    const result = await h.agentReplies({ ok: true, prUrl: "https://pr/1" });
+
+    const run = [...h.runs.values()][0];
+    expect(run.state).toBe("failed");
+    expect(result.failed).toBe(1);
+    expect(result.retried).toBe(0);
+    expect(result.abandoned).toBe(0);
+  });
+
+  it("takes the driving step out of the queue rather than letting it retry", async () => {
+    const h = harness({ dispatchFails: 1, failFrom: 1, dispatchCode: "no_agent" });
+    await startFeature(h);
+    const task = h.last().taskId;
+
+    await h.agentReplies({ ok: true, prUrl: "https://pr/1" });
+
+    // Left in the queue it would be reclaimed and fail the same way until it
+    // hit the attempt cap — five rewrites of a state that is already final.
+    expect(h.notified).toContain(task);
+    expect(h.retries).toEqual([]);
+    expect(h.abandoned).toEqual([]);
+  });
+
+  it("stays failed when the driver runs again", async () => {
+    const h = harness({ dispatchFails: 1, failFrom: 1, dispatchCode: "no_agent" });
+    await startFeature(h);
+    await h.agentReplies({ ok: true, prUrl: "https://pr/1" });
+
+    h.advanceClock(60 * 60_000);
+    const again = await h.driver.runOnce();
+
+    expect(again).toEqual({ advanced: 0, retried: 0, abandoned: 0, failed: 0 });
+    expect([...h.runs.values()][0].state).toBe("failed");
+  });
+
+  it("treats an ambiguous skill the same way — the definition, not the fleet, is wrong", async () => {
+    const h = harness({ dispatchFails: 1, dispatchCode: "ambiguous_agent" });
+    await expect(startFeature(h)).rejects.toBeInstanceOf(WorkflowRunFailed);
+    expect([...h.runs.values()][0].state).toBe("failed");
+  });
+
+  it("still retries an agent that is merely unreachable", async () => {
+    // `dispatch_failed` is the agent being down. The same dispatch later may
+    // well work, so this must not end the run.
+    const h = harness({ dispatchFails: 1, failFrom: 1, dispatchCode: "dispatch_failed" });
+    await startFeature(h);
+
+    const result = await h.agentReplies({ ok: true, prUrl: "https://pr/1" });
+
+    expect(result.retried).toBe(1);
+    expect(result.failed).toBe(0);
+    expect([...h.runs.values()][0].state).not.toBe("failed");
+    expect(h.retries).toHaveLength(1);
+  });
+
+  it("still retries a failure that carries no code at all", async () => {
+    const h = harness({ dispatchFails: 1, failFrom: 1 });
+    await startFeature(h);
+    const result = await h.agentReplies({ ok: true, prUrl: "https://pr/1" });
+    expect(result.retried).toBe(1);
+    expect(result.failed).toBe(0);
   });
 });

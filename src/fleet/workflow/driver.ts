@@ -151,6 +151,55 @@ export class WorkflowDriverError extends Error {
   }
 }
 
+/**
+ * Why a dispatch did not happen. The code is what decides the run's fate:
+ * `dispatch_failed` is the agent being unreachable and is worth retrying;
+ * the other two are not (see `WorkflowRunFailed`).
+ */
+export class WorkflowDispatchError extends Error {
+  constructor(
+    message: string,
+    readonly code: "no_agent" | "ambiguous_agent" | "dispatch_failed",
+  ) {
+    super(message);
+    this.name = "WorkflowDispatchError";
+  }
+}
+
+/**
+ * A dispatch that could not have succeeded, and would not succeed on a retry
+ * either: nothing in the tenant offers the skill, or several things do and the
+ * definition names none of them.
+ *
+ * Both used to travel the retry path, which is wrong in a way that is easy to
+ * miss: the run row is written *before* the dispatch, so a failure left the run
+ * one state ahead with no task behind it. Retries rewrote that same state five
+ * times over eight minutes and then gave up, and because the deadline sweep
+ * only ever looks at `fleet_tasks` — and no task row was created — nothing
+ * afterwards could move the run again. It sat in a live-looking state forever.
+ *
+ * So these end the run instead. The run is `failed` with a reason that names
+ * the skill, which is the one thing the person reading it has to know.
+ */
+export class WorkflowRunFailed extends Error {
+  constructor(
+    readonly runId: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "WorkflowRunFailed";
+  }
+}
+
+/** Retrying changes nothing for these; only the fleet or the definition can. */
+function isDeterministic(err: unknown): err is WorkflowDispatchError {
+  return (
+    err instanceof WorkflowDispatchError &&
+    (err.code === "no_agent" || err.code === "ambiguous_agent")
+  );
+}
+
 const DEFAULT_STEP_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
 /**
@@ -228,14 +277,57 @@ export function createWorkflowDriver(deps: WorkflowDriverDeps) {
       vars: decision.vars,
     });
 
-    const { taskId } = await deps.dispatcher.dispatch({
-      tenantId: run.tenantId,
-      workflowRunId: run.id,
-      fromState: decision.state,
-      skillId: decision.skillId,
-      payload: decision.payload,
-      deadlineAt: new Date(now().getTime() + stepTimeout),
-    });
+    let taskId: number;
+    try {
+      ({ taskId } = await deps.dispatcher.dispatch({
+        tenantId: run.tenantId,
+        workflowRunId: run.id,
+        fromState: decision.state,
+        skillId: decision.skillId,
+        payload: decision.payload,
+        deadlineAt: new Date(now().getTime() + stepTimeout),
+      }));
+    } catch (err) {
+      // A transient failure (the agent is down, the request timed out) still
+      // belongs on the retry path: the same dispatch later may well work.
+      if (!isDeterministic(err)) throw err;
+
+      await deps.store.updateRun(run.id, {
+        state: "failed",
+        status: "failed",
+        reason: err.message,
+        vars: decision.vars,
+      });
+      // The states walked to get here, then the failure. The run really did
+      // enter them — the row was written above — so a timeline that jumped
+      // from the previous step straight to `failed` would hide where it got
+      // to. The final one carries the skill but no task id, because no task
+      // was created: the dispatcher refuses before it writes one.
+      for (const state of decision.path) {
+        await deps.store.appendRunEvent({
+          tenantId: run.tenantId,
+          runId: run.id,
+          eventType: state,
+          payload: state === decision.state ? { skillId: decision.skillId } : {},
+        });
+      }
+      await deps.store.appendRunEvent({
+        tenantId: run.tenantId,
+        runId: run.id,
+        eventType: "failed",
+        payload: {
+          error: err.code,
+          reason: err.message,
+          state: decision.state,
+          skillId: decision.skillId,
+        },
+      });
+      deps.logger?.error(
+        { runId: run.id, state: decision.state, skillId: decision.skillId, error: err.code },
+        "workflow run failed: the step could not be dispatched",
+      );
+      throw new WorkflowRunFailed(run.id, err.code, err.message);
+    }
 
     // Only now does the run move on to waiting for the new step. This is what
     // makes a replayed completion a no-op instead of a second dispatch.
@@ -390,11 +482,18 @@ export function createWorkflowDriver(deps: WorkflowDriverDeps) {
      * One pass of the driver loop. Shares the notify queue's claim, so a
      * crashed driver's tasks come back on the next pass.
      */
-    async runOnce(): Promise<{ advanced: number; retried: number; abandoned: number }> {
+    async runOnce(): Promise<{
+      advanced: number;
+      retried: number;
+      abandoned: number;
+      /** Runs ended because a step could not be dispatched at all. */
+      failed: number;
+    }> {
       const due = await deps.store.claimWorkflowAdvances(now(), deps.batchSize ?? 20);
       let advanced = 0;
       let retried = 0;
       let abandoned = 0;
+      let failed = 0;
 
       for (const task of due) {
         try {
@@ -403,6 +502,14 @@ export function createWorkflowDriver(deps: WorkflowDriverDeps) {
           advanced += 1;
         } catch (err) {
           const error = err instanceof Error ? err.message : String(err);
+          if (err instanceof WorkflowRunFailed) {
+            // The run is already terminal; the step that drove it there has
+            // nothing left to do and must leave the queue, or it would be
+            // reclaimed and fail the same way until it hit the attempt cap.
+            await deps.store.markNotified(task.id);
+            failed += 1;
+            continue;
+          }
           if (task.attempt >= maxAttempts) {
             await deps.store.abandonNotification(task.id);
             abandoned += 1;
@@ -424,7 +531,7 @@ export function createWorkflowDriver(deps: WorkflowDriverDeps) {
         }
       }
 
-      return { advanced, retried, abandoned };
+      return { advanced, retried, abandoned, failed };
     },
   };
 }

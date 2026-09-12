@@ -250,8 +250,9 @@ Deliberately not in this release:
 
 Known gaps, tracked in the design docs: agent health is written at
 registration and never refreshed (there is no background sweep yet), and a run
-whose very first dispatch fails — because no agent offers that skill — is
-created and then has no task to retry, so it sits in its first state.
+whose very first dispatch fails *transiently* — the agent was unreachable — is
+created with no task behind it to retry, so it stays where it is. A step that
+names a skill nothing offers no longer does that: it ends the run.
 
 ## License
 

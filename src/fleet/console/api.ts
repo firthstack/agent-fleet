@@ -9,8 +9,8 @@ import type { A2APart } from "../protocol/a2a.js";
 import type { WorkflowDefinition } from "../workflow/engine.js";
 import { validateDefinition, WorkflowError } from "../workflow/engine.js";
 import type { WorkflowRunRecord } from "../workflow/driver.js";
-import { WorkflowDriverError } from "../workflow/driver.js";
-import { WorkflowDispatchError } from "../workflow/dispatcher.js";
+import { WorkflowDriverError, WorkflowRunFailed } from "../workflow/driver.js";
+import { WorkflowDispatchError } from "../workflow/driver.js";
 import { checkCallPayloads, skillIndex } from "../workflow/callCheck.js";
 import { ConsoleDispatchError } from "./messages.js";
 import type { AgentCredential } from "../site/a2aClient.js";
@@ -917,16 +917,23 @@ export function createConsoleHandler(deps: ConsoleDeps) {
               return true;
             }
             // No agent offers the first step's skill, or several do and the
-            // definition names none of them. Both are the user's own fleet to
-            // fix, and the message names the skill — which is the whole of
-            // what they need to know.
-            //
-            // NOTE: the run row is already written when this fires, and the
-            // driver leaves it sitting in its first state with no task to
-            // retry. That stranding predates the console and is shared with
-            // `/a2a/*`; this only stops it from being reported as a 500.
-            if (err instanceof WorkflowDispatchError) {
+            // definition names none of them. Neither can succeed on a retry,
+            // so the driver has already ended the run — the id is returned
+            // because that run is in the list and this is its explanation.
+            if (err instanceof WorkflowRunFailed) {
               sendJson(res, 409, {
+                error: err.code,
+                message: err.message,
+                runId: err.runId,
+                runState: "failed",
+              });
+              return true;
+            }
+            // The agent was unreachable, which is worth another try. Nothing
+            // retries a *first* step though — there is no task row yet — so
+            // this run is created and then stays where it is.
+            if (err instanceof WorkflowDispatchError) {
+              sendJson(res, 502, {
                 error: err.code,
                 message: err.message,
                 strandedRun: true,

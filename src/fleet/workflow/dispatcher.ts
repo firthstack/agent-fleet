@@ -1,6 +1,11 @@
 import type { A2AClient, AgentCredential } from "../site/a2aClient.js";
 import type { FleetTaskRecord, GatewayAgentRecord } from "../site/gatewayStore.js";
-import type { WorkflowDispatcher } from "./driver.js";
+// The interface this implements lives in driver.ts, and so does the error
+// taxonomy that goes with it: the driver decides which failures are worth a
+// retry, so it is the driver's contract to define.
+import { WorkflowDispatchError, type WorkflowDispatcher } from "./driver.js";
+
+export { WorkflowDispatchError };
 
 /**
  * Turns a workflow step into an ordinary gateway dispatch (docs §5.1).
@@ -42,16 +47,6 @@ export interface WorkflowDispatchStore {
     eventType: string;
     payload: unknown;
   }): Promise<void>;
-}
-
-export class WorkflowDispatchError extends Error {
-  constructor(
-    message: string,
-    readonly code: "no_agent" | "ambiguous_agent" | "dispatch_failed",
-  ) {
-    super(message);
-    this.name = "WorkflowDispatchError";
-  }
 }
 
 export interface WorkflowDispatcherDeps {
