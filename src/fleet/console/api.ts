@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
+  AgentTaskStats,
   FleetTaskRecord,
   GatewayAgentRecord,
   TenantRecord,
@@ -58,6 +59,7 @@ export interface ConsoleStore {
   listAgents(tenantId: number): Promise<GatewayAgentRecord[]>;
   getAgent(tenantId: number, agentId: string): Promise<GatewayAgentRecord | null>;
   deleteAgent(tenantId: number, agentId: string): Promise<boolean>;
+  agentTaskStats(tenantId: number, agentId?: string): Promise<Map<string, AgentTaskStats>>;
   getTask(taskId: number): Promise<FleetTaskRecord | null>;
 }
 
@@ -348,9 +350,17 @@ function parsePatchBody(value: unknown): {
   return changes;
 }
 
+const EMPTY_STATS: AgentTaskStats = {
+  totalRuns: 0,
+  succeeded: 0,
+  failed: 0,
+  running: 0,
+  runningSince: null,
+};
+
 /** The card is tenant-controlled and can be large; the console shows the
  *  parts it renders and leaves the rest in the registry. */
-function agentView(agent: GatewayAgentRecord) {
+function agentView(agent: GatewayAgentRecord, stats?: AgentTaskStats) {
   return {
     agentId: agent.agentId,
     displayName: agent.displayName,
@@ -366,6 +376,7 @@ function agentView(agent: GatewayAgentRecord) {
     })),
     cardFetchedAt: agent.cardFetchedAt,
     lastSeenAt: agent.lastSeenAt,
+    stats: stats ?? EMPTY_STATS,
   };
 }
 
@@ -592,7 +603,10 @@ export function createConsoleHandler(deps: ConsoleDeps) {
 
         if (req.method === "GET") {
           const agents = await deps.store.listAgents(caller.tenant.id);
-          sendJson(res, 200, { agents: agents.map(agentView) });
+          const stats = await deps.store.agentTaskStats(caller.tenant.id);
+          sendJson(res, 200, {
+            agents: agents.map((agent) => agentView(agent, stats.get(agent.agentId))),
+          });
           return true;
         }
 
@@ -719,7 +733,8 @@ export function createConsoleHandler(deps: ConsoleDeps) {
         }
 
         if (req.method === "GET") {
-          sendJson(res, 200, { agent: agentView(agent) });
+          const stats = await deps.store.agentTaskStats(caller.tenant.id, agent.agentId);
+          sendJson(res, 200, { agent: agentView(agent, stats.get(agent.agentId)) });
           return true;
         }
 

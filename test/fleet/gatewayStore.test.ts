@@ -309,6 +309,92 @@ describe("GatewayStore task mapping", () => {
   });
 });
 
+describe("GatewayStore.agentTaskStats", () => {
+  async function seed() {
+    const acme = await store.ensureTenant({ slug: "acme", displayName: "Acme" });
+    for (const agentId of ["dev-agent", "review-agent"]) {
+      await store.registerAgent({
+        tenantId: acme.id,
+        agentId,
+        displayName: agentId,
+        endpointUrl: `https://${agentId}.acme.example/`,
+        card: card(),
+      });
+    }
+    return acme;
+  }
+
+  const args = (targetAgentId: string, upstreamTaskId: string) => ({
+    upstreamTaskId,
+    callerAgentId: "user:ada",
+    targetAgentId,
+    skillId: "develop.issue",
+    deadlineAt: new Date(Date.now() + 3_600_000),
+  });
+
+  it("counts runs by outcome and reports how long the oldest active one has run", async () => {
+    const acme = await seed();
+
+    // done: dispatched, attached, resolved, notified.
+    const done = await store.createTask({ tenantId: acme.id, ...args("dev-agent", "up-done") });
+    await store.attachDownstream(done.id, { downstreamTaskId: "d1", callbackTokenHash: "h1" });
+    await store.recordDownstreamResult(done.id, { ok: true });
+    await store.markNotified(done.id);
+
+    // failed: dispatch itself never got off the ground.
+    const failed = await store.createTask({ tenantId: acme.id, ...args("dev-agent", "up-failed") });
+    await store.failTask(failed.id, { error: "unreachable" });
+
+    // timed_out: deadline already passed, swept by the reaper.
+    await store.createTask({
+      tenantId: acme.id,
+      ...args("dev-agent", "up-timeout"),
+      deadlineAt: new Date(Date.now() - 1000),
+    });
+    await store.claimExpired(new Date(), 10);
+
+    // still running: the oldest of the two active tasks.
+    const oldestRunning = await store.createTask({
+      tenantId: acme.id,
+      ...args("dev-agent", "up-running-1"),
+    });
+    await store.createTask({ tenantId: acme.id, ...args("dev-agent", "up-running-2") });
+
+    const stats = await store.agentTaskStats(acme.id);
+    const devAgent = stats.get("dev-agent");
+    expect(devAgent).toMatchObject({ totalRuns: 5, succeeded: 1, failed: 2, running: 2 });
+    expect(devAgent?.runningSince).toBe(oldestRunning.createdAt);
+    // No task ever named review-agent, so it does not appear at all.
+    expect(stats.has("review-agent")).toBe(false);
+  });
+
+  it("scopes to one agent when an agentId is given, without pulling in the tenant's other agents", async () => {
+    const acme = await seed();
+    await store.createTask({ tenantId: acme.id, ...args("dev-agent", "up-1") });
+    await store.createTask({ tenantId: acme.id, ...args("review-agent", "up-2") });
+
+    const stats = await store.agentTaskStats(acme.id, "dev-agent");
+    expect(stats.size).toBe(1);
+    expect(stats.get("dev-agent")).toMatchObject({ totalRuns: 1, running: 1 });
+  });
+
+  it("does not count another tenant's runs", async () => {
+    const acme = await seed();
+    const globex = await store.ensureTenant({ slug: "globex", displayName: "Globex" });
+    await store.registerAgent({
+      tenantId: globex.id,
+      agentId: "dev-agent",
+      displayName: "dev-agent",
+      endpointUrl: "https://dev-agent.globex.example/",
+      card: card(),
+    });
+    await store.createTask({ tenantId: globex.id, ...args("dev-agent", "up-1") });
+
+    const stats = await store.agentTaskStats(acme.id);
+    expect(stats.has("dev-agent")).toBe(false);
+  });
+});
+
 describe("row level security", () => {
   it("blocks a cross-tenant read even when the query forgets its tenant filter", async () => {
     const acme = await store.ensureTenant({ slug: "acme", displayName: "Acme" });

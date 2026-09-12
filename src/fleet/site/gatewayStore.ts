@@ -29,6 +29,16 @@ export interface GatewayAgentRecord {
   lastSeenAt: string | null;
 }
 
+/** What the agent card on `/app/agents` shows besides the card itself. */
+export interface AgentTaskStats {
+  totalRuns: number;
+  succeeded: number;
+  failed: number;
+  running: number;
+  /** `created_at` of the oldest task still `dispatching`/`running`; null when none are. */
+  runningSince: string | null;
+}
+
 export interface FleetTaskRecord {
   id: number;
   tenantId: number;
@@ -484,6 +494,49 @@ export class GatewayStore {
         [tenantId],
       );
       return rows.map(toAgent);
+    });
+  }
+
+  /**
+   * Run counts per agent, keyed by `agentId` — the numbers the card on
+   * `/app/agents` shows. Scoped to one agent when `agentId` is given, so the
+   * detail page does not pay for every agent's aggregate to show its own.
+   */
+  async agentTaskStats(
+    tenantId: number,
+    agentId?: string,
+  ): Promise<Map<string, AgentTaskStats>> {
+    return this.withTenant(tenantId, async (client) => {
+      const { rows } = await client.query<{
+        target_agent_id: string;
+        total: string;
+        succeeded: string;
+        failed: string;
+        running: string;
+        oldest_running: Date | null;
+      }>(
+        `SELECT target_agent_id,
+           COUNT(*) AS total,
+           COUNT(*) FILTER (WHERE state IN ('done', 'done_pending_notify')) AS succeeded,
+           COUNT(*) FILTER (WHERE state IN ('failed', 'timed_out')) AS failed,
+           COUNT(*) FILTER (WHERE state IN ('dispatching', 'running')) AS running,
+           MIN(created_at) FILTER (WHERE state IN ('dispatching', 'running')) AS oldest_running
+         FROM fleet_tasks
+         WHERE tenant_id = $1 ${agentId ? "AND target_agent_id = $2" : ""}
+         GROUP BY target_agent_id`,
+        agentId ? [tenantId, agentId] : [tenantId],
+      );
+      const stats = new Map<string, AgentTaskStats>();
+      for (const row of rows) {
+        stats.set(row.target_agent_id, {
+          totalRuns: Number(row.total),
+          succeeded: Number(row.succeeded),
+          failed: Number(row.failed),
+          running: Number(row.running),
+          runningSince: iso(row.oldest_running),
+        });
+      }
+      return stats;
     });
   }
 
