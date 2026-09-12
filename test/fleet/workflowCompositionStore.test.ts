@@ -1,5 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
-import { GenericContainer, type StartedTestContainer } from "testcontainers";
+import type { StartedTestContainer } from "testcontainers";
+import { startPostgres } from "./support/postgres.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { GatewayStore } from "../../src/fleet/site/gatewayStore.js";
 import type { WorkflowStore } from "../../src/fleet/workflow/workflowStore.js";
@@ -32,17 +33,9 @@ function card(): A2AAgentCard {
 beforeAll(async () => {
   let connectionString = EXTERNAL_URL;
   if (!connectionString) {
-    container = await new GenericContainer("postgres:16")
-      .withEnvironment({
-        POSTGRES_USER: "admin",
-        POSTGRES_PASSWORD: "admin",
-        POSTGRES_DB: "fleet_test",
-      })
-      .withExposedPorts(5432)
-      .start();
-    connectionString = `postgres://admin:admin@${container.getHost()}:${container.getMappedPort(
-      5432,
-    )}/fleet_test?sslmode=disable`;
+    const started = await startPostgres();
+    container = started.container;
+    connectionString = started.connectionString;
   }
 
   store = new GatewayStore({ connectionString, insecureSsl: !EXTERNAL_URL });
