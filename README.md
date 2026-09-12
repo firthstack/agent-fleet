@@ -1,20 +1,36 @@
 # agent-fleet
 
-A multi-tenant **A2A gateway** with a workflow composition layer: agents
-register with it, every message between them passes through it, and workflows
-are definitions it owns rather than code inside an agent.
+**A multi-tenant [A2A](https://a2a-protocol.org) gateway with a workflow
+composition layer.** Agents register with it, every message between them
+passes through it, and workflows are definitions the gateway owns rather than
+code buried inside an agent.
 
-Both ends of every hop speak standard [A2A](https://a2a-protocol.org). The
-gateway is an A2A server facing callers and an A2A client facing targets, so
-agent authors use off-the-shelf SDKs and there is no proprietary client to
-adopt. Agents live in their own repos — the ones this was extracted from are
-in [`../john-bot`](../john-bot).
+Both ends of every hop speak standard A2A. The gateway is an A2A server facing
+callers and an A2A client facing targets, so agent authors use off-the-shelf
+SDKs and there is no proprietary client to adopt. Your agents stay in their own
+repos, in whatever language you like; the fleet only needs the URL of something
+that publishes an agent card.
 
-Design docs, which carry the reasoning and the deviations found while
-building it:
+> **First release (0.1.0).** Everything described below works and is covered by
+> tests. See [Status](#status) for what is deliberately not here yet.
 
-- [docs/fleet-a2a-gateway.md](docs/fleet-a2a-gateway.md) — transport, tenancy, the callback chain
-- [docs/fleet-composition-layer.md](docs/fleet-composition-layer.md) — the workflow state machine
+## Why
+
+Once you have more than one agent, the interesting problems stop being about
+any single agent:
+
+- **Something has to own the multi-step flow.** Put "implement → review →
+  revise → merge" inside an agent and you have coupled two jobs that change at
+  different rates. Here it is a versioned definition, and it is a **state
+  machine, not a DAG** — the loop back from review to revision is the thing a
+  DAG cannot express.
+- **Agent work takes minutes to hours.** So nothing holds a connection. Every
+  step is a row with a deadline, a callback token and backoff retries.
+- **Discovery has to be scoped.** An agent should find the agents it is allowed
+  to find, and nothing else. Tenancy is enforced in routing, not by a
+  permission check bolted on afterwards.
+- **A human needs to see where a run is stuck.** Which is a console, not a log
+  file.
 
 ## How a step travels
 
@@ -26,28 +42,133 @@ building it:
         next step ◀──── /a2a/callbacks/{token} ◀┘
 ```
 
-A step is one `fleet_tasks` row. The gateway owns delivery, backoff retries
-and the deadline sweep; the composition layer sits on top and only answers
-"what happens next", so it implements no reliability machinery of its own.
+A step is one `fleet_tasks` row. The gateway owns delivery, backoff retries and
+the deadline sweep; the composition layer sits on top and only answers "what
+happens next", so it implements no reliability machinery of its own.
 
-## Running it
+## Quick start
+
+Requires Node 20+ and a Postgres you can reach.
 
 ```bash
 npm install
-npm run migrate          # DATABASE_URL must be set
-npm run dev              # or: npm run build && npm start
+cp .env.example .env     # then fill in DATABASE_URL and the two secrets
+npm run migrate
+npm run build && npm start   # or: npm run dev
 ```
 
-Open the gateway's root for the **console**. Sign up, connect an agent, write
-a workflow against the skills it advertises, start a run, and watch it move —
-a list of runs, how long each has sat in its current state, and the timeline
-of every step with the gap between them.
+Open the gateway's root for the **console**: sign up, connect an agent, write a
+workflow against the skills it advertises, start a run, and watch it move — a
+list of runs, how long each has sat in its current state, and the timeline of
+every step with the gap between them.
 
-The console is a second identity axis, not a second door onto the first one:
-people authenticate with a session on `/api/*`, agents with a bearer token on
-`/a2a/*`, and neither surface accepts the other's credential.
+Two secrets are not optional. `FLEET_SECRET_KEY` seals the outbound
+credentials the gateway presents to your agents, and `BETTER_AUTH_SECRET` signs
+console sessions — leaking the latter means anyone can forge any user's
+session. `FLEET_PUBLIC_BASE_URL` matters just as much for a different reason:
+every callback URL handed to an agent is built from it, so a wrong value means
+agents call back to an address that never reaches you.
+
+## Connecting an agent
+
+An agent needs to do three things: publish an agent card, accept
+`message/send`, and call back when the work is finished. Anything that does
+that can join a fleet.
+
+From the console, paste the agent's URL. The gateway fetches its card through
+an SSRF policy (private ranges, IPv4-in-IPv6, per-hop revalidation, DNS
+rebinding), stores the skills it advertises, and issues an inbound token —
+**shown once**, because only its hash is kept.
+
+Skills that declare an `inputSchema` get it enforced: a payload that does not
+match is refused before anything is dispatched, with one line per offending
+field. Without that check a typo travels all the way to the agent and comes
+back hours later as a failed callback.
+
+## Composing agents
+
+`workflows/develop-review-merge.json` is the worked example — implement,
+review, revise until the review passes, then ask a human to merge. The loop
+back from review to revision is bounded by an iteration limit.
+
+Publish and start a run from the console's editor, which validates as you
+type, draws the state graph, and warns about anything your actual fleet cannot
+serve (a skill no connected agent offers, a payload that does not match one).
+Or drive it over the machine surface:
+
+```bash
+curl -X PUT $SITE/a2a/t/$TENANT/workflows/develop-review-merge/1 \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  --data @workflows/develop-review-merge.json
+
+# sourceRef is what makes a retried request idempotent
+curl -X POST $SITE/a2a/t/$TENANT/workflows/develop-review-merge/runs \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"payload":{"requirement":"Fix login"},"sourceRef":"issue-9"}'
+```
+
+A published definition is a version, and an in-flight run stays bound to the
+version it started on — so editing is safe.
+
+## Deploying on InstaCloud
+
+The reference deployment runs on [InstaCloud](https://instacloud.com): one
+Postgres service and one compute service, wired together by the `insta` CLI.
+The `Dockerfile` in this repo builds both halves — the gateway and the console
+— into a single image.
+
+```bash
+insta login
+insta project create agent-fleet          # or run inside an already-linked repo
+
+insta services add postgres agent-db
+insta services add compute site
+
+# A provider credential reaches the container only through an explicit
+# binding; having a postgres service is not enough.
+insta secrets bind DATABASE_URL postgres/agent-db --to compute/site
+
+insta secrets set FLEET_SECRET_KEY   "$(openssl rand -hex 32)"
+insta secrets set BETTER_AUTH_SECRET "$(openssl rand -hex 32)"
+
+insta build . --port 8790                 # local pre-flight, no deploy
+insta deploy . --group site --port 8790
+```
+
+Leave `FLEET_PORT` unset there: the container binds the platform's `PORT`, and
+`--port` has to agree with the `EXPOSE` line in the Dockerfile.
+
+Then point the gateway at itself. The URL `insta deploy` prints is what every
+callback and agent-facing URL is built from, so it is not optional — an agent
+told to call back to the wrong host simply never completes a step:
+
+```bash
+insta secrets set FLEET_PUBLIC_BASE_URL https://<the-url-deploy-printed>
+insta secrets set FLEET_TRUSTED_ORIGINS https://<the-url-deploy-printed>
+insta compute restart site                # a secret change needs a restart
+```
+
+Migrations are files under `migrations/`, replayed in order. They travel in the
+image, so the deployed service can apply them — but run them as a step of their
+own, never as a startup gate:
+
+```bash
+insta compute exec site -- npm run migrate
+# or, without involving compute at all:
+psql "$(insta db url)" -f migrations/0001_fleet_gateway.sql
+```
+
+**Branches are the reason this pairs well.** `insta branch create <name>`
+forks the database and clones the compute service, so a new workflow
+definition can be exercised against a copy of real data on its own URL,
+with its own agents connected, without touching production. Nothing InstaCloud
+does merges databases, though — only the files in `migrations/` carry schema
+forward.
 
 ## Endpoints
+
+`/a2a/*` is the machine surface (bearer token). `/api/*` is the console
+(session cookie). Neither accepts the other's credential.
 
 | Endpoint | Purpose |
 | --- | --- |
@@ -81,30 +202,9 @@ people authenticate with a session on `/api/*`, agents with a bearer token on
 | `GET /` and `/app/*` | the console (static; unmatched paths fall back to the SPA shell) |
 | `GET /healthz` | liveness |
 
-`/a2a/*` is bearer-only and `/api/*` is session-only, deliberately: one
-endpoint accepting both would give the machine surface a CSRF face it never
-needed, and would make `caller_agent_id` stop being one kind of thing.
-
-Cross-tenant requests answer `404`, not `403`: a `403` would confirm that some
-other tenant owns that agent id.
-
-## Composing agents
-
-`workflows/develop-review-merge.json` is the worked example — implement,
-review, revise until the review passes, then ask a human to merge. It is a
-**state machine, not a DAG**: the flow loops back from review to revision,
-bounded by an iteration limit, which a DAG cannot express.
-
-```bash
-curl -X PUT $SITE/a2a/t/$TENANT/workflows/develop-review-merge/1 \
-  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  --data @workflows/develop-review-merge.json
-
-# sourceRef is what makes a retried request idempotent
-curl -X POST $SITE/a2a/t/$TENANT/workflows/develop-review-merge/runs \
-  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  -d '{"payload":{"requirement":"Fix login"},"sourceRef":"issue-9"}'
-```
+Splitting the two surfaces is deliberate. One endpoint accepting both a cookie
+and a bearer token would give the machine surface a CSRF face it never needed,
+and would make `caller_agent_id` stop being one kind of thing.
 
 ## Tenancy
 
@@ -112,8 +212,11 @@ Isolation is enforced in the routing layer, not by a permission check: the
 gateway resolves a target only inside the caller's own tenant, so another
 tenant's same-named agent is simply not in the search set. Postgres RLS is the
 backstop underneath — `SET LOCAL ROLE` switches into an unprivileged role per
-request, because the pool connects as the table owner and RLS does not apply
-to such a role.
+request, because the pool connects as the table owner and RLS does not apply to
+such a role.
+
+Cross-tenant requests answer `404`, not `403`: a `403` would confirm that some
+other tenant owns that agent id.
 
 ## Tests
 
@@ -125,3 +228,33 @@ npm run typecheck
 `test/fleet/workflowEndToEnd.test.ts` runs the whole thing over real HTTP
 against a real Postgres, with agents on the real A2A runtime. The only stubs
 are the agents' business logic — the one part a fleet is not responsible for.
+
+## Status
+
+Working and tested: agent registration and discovery, the task ledger with
+retries and deadline sweeps, the workflow state machine, the console (sign-up,
+agents, the workflow editor, run timelines), and payload validation against
+each skill's declared schema.
+
+Deliberately not in this release:
+
+- **Visual drag-and-drop composition.** These flows are state machines with
+  loops, and a canvas is bad at exactly that shape. The editor is code plus a
+  derived graph.
+- **Organisations and invitations.** One user is one tenant for now. The
+  membership table is already shaped for multiple members, so that change will
+  not need a data migration.
+- **Billing.** No schema reserved for it.
+
+Known gaps, tracked in the design docs: agent health is written at
+registration and never refreshed (there is no background sweep yet), and a run
+whose very first dispatch fails — because no agent offers that skill — is
+created and then has no task to retry, so it sits in its first state.
+
+## Design docs
+
+These carry the reasoning, and the deviations found while building:
+
+- [docs/fleet-a2a-gateway.md](docs/fleet-a2a-gateway.md) — transport, tenancy, the callback chain
+- [docs/fleet-composition-layer.md](docs/fleet-composition-layer.md) — the workflow state machine
+- [docs/fleet-console.md](docs/fleet-console.md) — identity, the three surfaces, and the console's phases

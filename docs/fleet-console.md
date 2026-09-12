@@ -267,7 +267,7 @@ dist/web/       Vite 产出的前端资源
 
 本文原先还列了 `BETTER_AUTH_URL`，实现时没有采纳：它和 `FLEET_PUBLIC_BASE_URL` 说的是同一件事，而"这个进程对外是什么地址"有两个来源就迟早会不一致——Better Auth 的 `baseURL` 直接由 `FLEET_PUBLIC_BASE_URL` 推导。
 
-漂移守卫此前并不存在（它留在 john-bot 里没跟过来），现在补上了：`test/fleet/envExample.test.ts` 扫描 `src/` 里每一处 `process.env.X`，少一个就红。
+漂移守卫此前并不存在，现在补上了：`test/fleet/envExample.test.ts` 扫描 `src/` 里每一处环境变量读取，少一个就红。它同时匹配 `process.env.X` 和 `env.X`——本仓库多数模块把 `env` 作为参数注入（`env: NodeJS.ProcessEnv = process.env`），只认前者会漏掉绝大部分变量。
 
 ---
 
