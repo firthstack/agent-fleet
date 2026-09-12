@@ -431,13 +431,23 @@ export function createHealthSweeper(deps: {
   refresh(
     agent: GatewayAgentRecord,
   ): Promise<{ health: "healthy" | "unreachable"; changed: boolean }>;
+  /**
+   * Called when a single agent's probe throws (e.g. the store rejects the
+   * write). Without this, one bad agent's failure would otherwise propagate
+   * out of the loop below and abort the sweep for every remaining tenant.
+   */
+  onError?(agent: GatewayAgentRecord, error: unknown): void;
 }) {
   return async function runOnce(): Promise<{ checked: number; unreachable: number }> {
     const agents = await deps.store.listAllAgentsUnscoped();
     let unreachable = 0;
     for (const agent of agents) {
-      const result = await deps.refresh(agent);
-      if (result.health === "unreachable") unreachable += 1;
+      try {
+        const result = await deps.refresh(agent);
+        if (result.health === "unreachable") unreachable += 1;
+      } catch (err) {
+        deps.onError?.(agent, err);
+      }
     }
     return { checked: agents.length, unreachable };
   };

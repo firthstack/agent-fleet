@@ -303,6 +303,16 @@ export function startFleetWorkers(opts: {
     const sweepHealth = createHealthSweeper({
       store: healthCheck.store,
       refresh: healthCheck.refresh,
+      onError(agent, err) {
+        opts.logger?.error(
+          {
+            tenantId: agent.tenantId,
+            agentId: agent.agentId,
+            error: err instanceof Error ? err.message : String(err),
+          },
+          "fleet gateway health probe failed",
+        );
+      },
     });
     // Serial per-agent probes mean a slow sweep can outlast its own
     // interval; without this guard, overlapping sweeps pile up concurrent

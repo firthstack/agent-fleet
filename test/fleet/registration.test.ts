@@ -531,6 +531,31 @@ describe("createHealthSweeper", () => {
 
     expect(await sweep()).toEqual({ checked: 2, unreachable: 1 });
   });
+
+  it("isolates a probe failure so a rejected refresh doesn't abort the sweep for another tenant's agent", async () => {
+    const refreshed: string[] = [];
+    const errors: Array<{ agentId: string; error: unknown }> = [];
+    const sweep = createHealthSweeper({
+      store: { async listAllAgentsUnscoped() { return [healthy, other]; } },
+      async refresh(agent) {
+        refreshed.push(agent.agentId);
+        if (agent.agentId === "dev-agent") {
+          // Simulates PostgreSQL JSONB rejecting a card containing an
+          // escaped null character, which `validateAgentCard` lets through.
+          throw new Error('invalid input syntax for type json: unsupported Unicode escape sequence');
+        }
+        return { health: "healthy", changed: false };
+      },
+      onError(agent, error) {
+        errors.push({ agentId: agent.agentId, error });
+      },
+    });
+
+    expect(await sweep()).toEqual({ checked: 2, unreachable: 0 });
+    expect(refreshed).toEqual(["dev-agent", "review-agent"]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].agentId).toBe("dev-agent");
+  });
 });
 
 describe("secretBox", () => {
