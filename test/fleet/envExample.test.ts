@@ -12,8 +12,16 @@ import { describe, expect, it } from "vitest";
  * subtly broken session rather than a crash.
  */
 
-/** Set by the platform, not by a deployer, so not ours to document. */
-const AMBIENT = new Set(["NODE_ENV"]);
+/**
+ * Names a deployer has nothing to set, each with the reason it is exempt. Kept
+ * as a list rather than a pattern so that adding one is a decision somebody
+ * made on purpose.
+ */
+const EXEMPT: Record<string, string> = {
+  NODE_ENV: "set by the runtime, not by a deployer",
+  PORT: "supplied by the host platform; FLEET_PORT overrides it",
+  FLEET_MODE: "one legal value ('site'), which is also the default",
+};
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((entry) => {
@@ -28,8 +36,12 @@ describe(".env.example", () => {
     const referenced = new Set<string>();
     for (const file of sourceFiles("src")) {
       const source = readFileSync(file, "utf8");
-      for (const match of source.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)/g)) {
-        if (!AMBIENT.has(match[1])) referenced.add(match[1]);
+      // Both access patterns. Most of this codebase takes `env` as an
+      // injected parameter (`env: NodeJS.ProcessEnv = process.env`) and reads
+      // `env.FLEET_PORT` off it, so matching only `process.env.X` would miss
+      // the majority of the variables that actually configure the gateway.
+      for (const match of source.matchAll(/(?:process\.env|\benv)\.([A-Z][A-Z0-9_]*)/g)) {
+        referenced.add(match[1]);
       }
     }
 
@@ -38,8 +50,22 @@ describe(".env.example", () => {
       [...example.matchAll(/^([A-Z][A-Z0-9_]*)=/gm)].map((m) => m[1]),
     );
 
-    const missing = [...referenced].filter((name) => !documented.has(name)).sort();
+    const missing = [...referenced]
+      .filter((name) => !documented.has(name) && !(name in EXEMPT))
+      .sort();
     expect(missing).toEqual([]);
+  });
+
+  it("keeps no exemption for a variable the code stopped reading", () => {
+    // An exemption list nobody prunes is how a real gap hides behind a stale
+    // entry, so the list has to justify itself against the source each run.
+    const source = sourceFiles("src")
+      .map((file) => readFileSync(file, "utf8"))
+      .join("\n");
+    const stale = Object.keys(EXEMPT).filter(
+      (name) => !new RegExp(`(?:process\\.env|\\benv)\\.${name}\\b`).test(source),
+    );
+    expect(stale).toEqual([]);
   });
 
   it("carries no secret values, only the names", () => {
