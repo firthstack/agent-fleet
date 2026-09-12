@@ -263,6 +263,8 @@ export function WorkflowEditor() {
             </p>
           </div>
 
+          <StartRun name={name} versions={versions} />
+
           <div className="editor">
             <div className="panel">
               <div className="panel-head">
@@ -382,8 +384,6 @@ export function WorkflowEditor() {
             {error ? <p className="error">{error}</p> : null}
             {note ? <p className="lead">{note}</p> : null}
           </div>
-
-          <StartRun name={name} versions={versions} />
         </>
       )}
     </Shell>
