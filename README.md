@@ -94,6 +94,8 @@ back from review to revision is bounded by an iteration limit.
 Publish and start a run from the console's editor, which validates as you
 type, draws the state graph, and warns about anything your actual fleet cannot
 serve (a skill no connected agent offers, a payload that does not match one).
+Write the definition as JSON or YAML — the editor converts between them, though
+a definition is stored as JSON, so YAML comments do not survive a reopen.
 Or drive it over the machine surface:
 
 ```bash

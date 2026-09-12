@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   getWorkflow,
@@ -12,6 +12,13 @@ import {
 } from "../api.ts";
 import { Shell } from "../components/Shell.tsx";
 import { StateDiagram } from "../components/StateDiagram.tsx";
+import {
+  convertText,
+  parseDefinition,
+  serializeDefinition,
+  templateFor,
+  type DefinitionFormat,
+} from "../workflowFormat.ts";
 
 /**
  * `/app/workflows/:name` (docs §7) — code on the left, the graph on the
@@ -23,34 +30,19 @@ import { StateDiagram } from "../components/StateDiagram.tsx";
  * definition the editor called fine and the server refused.
  */
 
-const TEMPLATE = `{
-  "workflow": "NAME",
-  "version": 1,
-  "start": [{ "goto": "working" }],
-  "states": {
-    "working": {
-      "call": { "skill": "some.skill", "payload": {} },
-      "next": [
-        { "when": "result.ok", "goto": "completed" },
-        { "fail": "the step did not succeed" }
-      ]
-    }
-  }
-}
-`;
-
 /** Debounced so typing does not fire a request per keystroke. */
 const VALIDATE_MS = 400;
 
-function parse(text: string): { def: WorkflowDefinition | null; syntax: string | null } {
+/** Remembered per browser: a format toggle that resets on every page load is
+ *  a worse default than either format. */
+const FORMAT_KEY = "fleet.workflowFormat";
+
+function rememberedFormat(): DefinitionFormat {
   try {
-    const parsed = JSON.parse(text) as WorkflowDefinition;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return { def: null, syntax: "a definition must be a JSON object" };
-    }
-    return { def: parsed, syntax: null };
-  } catch (err) {
-    return { def: null, syntax: (err as Error).message };
+    return localStorage.getItem(FORMAT_KEY) === "yaml" ? "yaml" : "json";
+  } catch {
+    // Private windows and blocked site data both throw here.
+    return "json";
   }
 }
 
@@ -148,8 +140,21 @@ export function WorkflowEditor() {
   const [publishAs, setPublishAs] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [format, setFormat] = useState<DefinitionFormat>(rememberedFormat);
 
-  const { def, syntax } = useMemo(() => parse(text ?? "{}"), [text]);
+  // Read inside the loader without making it a dependency: re-running that
+  // effect on a toggle would refetch and overwrite whatever was being typed.
+  const formatRef = useRef(format);
+  formatRef.current = format;
+
+  const { def, syntax } = useMemo(() => {
+    // `null` is "not loaded yet", which is not the same as an empty editor —
+    // reporting a syntax error against text nobody has typed would flash a
+    // complaint on every page load.
+    if (text === null) return { def: null, syntax: null };
+    const { value, error: parseError } = parseDefinition(text, format);
+    return { def: value as WorkflowDefinition | null, syntax: parseError };
+  }, [text, format]);
 
   // Open on the latest published version, or a template when there is none.
   useEffect(() => {
@@ -168,8 +173,8 @@ export function WorkflowEditor() {
       setPublishAs(String((mine[0] ?? 0) + 1));
       setText(
         current
-          ? JSON.stringify(current.definition, null, 2)
-          : TEMPLATE.replace("NAME", name),
+          ? serializeDefinition(current.definition, formatRef.current)
+          : templateFor(name, formatRef.current),
       );
     })();
     return () => {
@@ -203,6 +208,25 @@ export function WorkflowEditor() {
   }, [def]);
 
   const publishable = def !== null && issues !== null && issues.length === 0;
+
+  function switchFormat(next: DefinitionFormat) {
+    if (next === format) return;
+    const converted = convertText(text ?? "", format, next);
+    if (converted.error) {
+      // Nothing is discarded and the format does not move: the text is not
+      // something we can rewrite yet, and it is the only copy.
+      setError(`cannot switch while the definition does not parse — ${converted.error}`);
+      return;
+    }
+    setError(null);
+    setText(converted.text);
+    setFormat(next);
+    try {
+      localStorage.setItem(FORMAT_KEY, next);
+    } catch {
+      // A remembered preference is a convenience, never a requirement.
+    }
+  }
 
   async function publish(event: FormEvent) {
     event.preventDefault();
@@ -241,7 +265,29 @@ export function WorkflowEditor() {
 
           <div className="editor">
             <div className="panel">
-              <h2>Definition</h2>
+              <div className="panel-head">
+                <h2>Definition</h2>
+                <div className="segmented" role="group" aria-label="Definition format">
+                  {(["json", "yaml"] as const).map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      className={option === format ? "on" : ""}
+                      aria-pressed={option === format}
+                      onClick={() => switchFormat(option)}
+                    >
+                      {option.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {format === "yaml" ? (
+                <p className="hint">
+                  YAML is an editing convenience. A definition is published and
+                  stored as JSON, so comments and layout live only as long as
+                  this text — reopening the page shows JSON.
+                </p>
+              ) : null}
               <textarea
                 className="mono code"
                 spellCheck={false}
@@ -266,7 +312,7 @@ export function WorkflowEditor() {
             <h2>
               Validation{" "}
               {syntax ? (
-                <span className="pill bad">invalid JSON</span>
+                <span className="pill bad">invalid {format.toUpperCase()}</span>
               ) : checking ? (
                 <span className="pill">checking…</span>
               ) : issues && issues.length > 0 ? (

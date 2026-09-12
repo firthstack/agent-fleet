@@ -832,3 +832,47 @@ textarea.code {
 .warnings code {
   color: var(--warn);
 }
+
+/* ------------------------------------------------------ the format toggle */
+
+/* A panel title with a control sitting opposite it. */
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.panel-head h2 {
+  margin: 0;
+}
+
+/* Two mutually exclusive choices, so one control rather than two buttons:
+ * which one is on has to be readable at a glance, not inferred. */
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.segmented button {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  padding: 3px 10px;
+  border: 0;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+.segmented button + button {
+  border-left: 1px solid var(--rule);
+}
+.segmented button:hover {
+  color: var(--ink);
+}
+.segmented button.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
