@@ -135,12 +135,16 @@ export interface RegistrationStorePort {
   ): Promise<{ revoked: number }>;
   /**
    * Conditional write used by the health sweep: never inserts, and only
-   * lands if `expectedVersion` still matches what is stored.
+   * lands if both `expectedVersion` and `expectedRowId` still match what is
+   * stored — the row id catches a delete-and-re-register that landed a
+   * fresh row whose version happens to coincide with the one this probe
+   * captured (docs §5 step 5).
    */
   updateAgentProbe(input: {
     tenantId: number;
     agentId: string;
     expectedVersion: number | null;
+    expectedRowId: number | null;
     card: A2AAgentCard;
     health: "healthy" | "unreachable";
   }): Promise<GatewayAgentRecord | null>;
@@ -174,8 +178,12 @@ export interface RegisterAgentResult {
  * `safeFetch`'s own timer covers only the wait for response headers — once
  * they arrive it clears the timeout, so a server that sends headers and then
  * never finishes the body can stall a reader indefinitely. This races the
- * body read against its own deadline and cancels the stream on timeout so
- * the caller (and the connection) is freed either way.
+ * body read against its own deadline. The timeout aborts the fetch's own
+ * `AbortController` rather than calling `body.cancel()`: by the time the
+ * deadline fires, `res.json()` already holds the stream's reader lock, and
+ * `cancel()` on a locked stream rejects with "ReadableStream is locked" —
+ * silently, if that rejection isn't handled — leaving the connection and the
+ * in-flight read running. Aborting works regardless of who holds the lock.
  */
 class ProbeTimeoutError extends Error {}
 
@@ -195,6 +203,10 @@ async function withDeadline<T>(
     return await Promise.race([promise, deadline]);
   } finally {
     clearTimeout(timer!);
+    // Once `deadline` wins the race, `promise` is still pending and nothing
+    // else awaits it; aborting unblocks it, but its eventual rejection would
+    // otherwise surface as an unhandled rejection.
+    promise.catch(() => {});
   }
 }
 
@@ -208,6 +220,11 @@ export function createRegistrationService(deps: RegistrationDeps) {
       endpointUrl,
     ).toString();
 
+    // Owned here (not just inside `safeFetch`) so the body-read deadline
+    // below can abort the same underlying request: `safeFetch` clears its
+    // own timer once headers arrive, but this controller stays live for as
+    // long as the caller holds onto it.
+    const controller = new AbortController();
     let res: Response;
     try {
       res = await safeFetch(
@@ -218,6 +235,7 @@ export function createRegistrationService(deps: RegistrationDeps) {
           lookup: deps.lookup,
           fetchImpl: deps.fetchImpl,
           timeoutMs,
+          controller,
         },
       );
     } catch (err) {
@@ -240,7 +258,7 @@ export function createRegistrationService(deps: RegistrationDeps) {
     let payload: unknown;
     try {
       payload = await withDeadline(res.json(), timeoutMs, () => {
-        void res.body?.cancel().catch(() => {});
+        controller.abort();
       });
     } catch (err) {
       if (err instanceof ProbeTimeoutError) {
@@ -387,6 +405,7 @@ export function createRegistrationService(deps: RegistrationDeps) {
         tenantId: agent.tenantId,
         agentId: agent.agentId,
         expectedVersion: agent.probeVersion ?? null,
+        expectedRowId: agent.rowId ?? null,
         card,
         health,
       });

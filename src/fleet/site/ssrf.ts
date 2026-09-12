@@ -223,6 +223,14 @@ export interface SafeFetchOptions {
   fetchImpl?: typeof fetch;
   maxRedirects?: number;
   timeoutMs?: number;
+  /**
+   * Caller-owned controller for the whole request, not just the header wait.
+   * When supplied, the header-wait timer aborts this controller instead of
+   * one scoped to this call, so a caller that keeps it can also abort the
+   * body read after headers arrive — freeing the connection even once its
+   * own reader (e.g. `res.json()`) has locked the stream.
+   */
+  controller?: AbortController;
 }
 
 /**
@@ -247,7 +255,7 @@ export async function safeFetch(
       policy: opts.policy,
     });
 
-    const controller = new AbortController();
+    const controller = opts.controller ?? new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let res: Response;
     try {

@@ -1,4 +1,6 @@
 import { randomBytes } from "node:crypto";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
 import {
   assertValidAgentId,
@@ -31,8 +33,11 @@ function validCard(): A2AAgentCard {
 
 function fakeStore(seed: GatewayAgentRecord[] = []) {
   const agents = [...seed];
-  let clock = 0;
-  const nextVersion = () => ++clock;
+  // Separate counters, matching real Postgres semantics: `id` is a serial
+  // primary key, never reused once assigned; `probe_version` starts at 1 on
+  // every fresh INSERT and only increments from there for that same row.
+  let rowIdSeq = Math.max(0, ...seed.map((a) => a.rowId ?? 0));
+  const nextRowId = () => ++rowIdSeq;
   const tokens: Array<{
     tenantId: number;
     agentId: string;
@@ -46,6 +51,10 @@ function fakeStore(seed: GatewayAgentRecord[] = []) {
       return agents.find((a) => a.tenantId === tenantId && a.agentId === agentId) ?? null;
     },
     async registerAgent(input) {
+      const i = agents.findIndex(
+        (a) => a.tenantId === input.tenantId && a.agentId === input.agentId,
+      );
+      const existing = i >= 0 ? agents[i] : null;
       const record: GatewayAgentRecord = {
         tenantId: input.tenantId,
         agentId: input.agentId,
@@ -55,11 +64,11 @@ function fakeStore(seed: GatewayAgentRecord[] = []) {
         health: input.health ?? "healthy",
         cardFetchedAt: "2026-09-11T00:00:00.000Z",
         lastSeenAt: null,
-        probeVersion: nextVersion(),
+        // A true insert starts a fresh row at version 1; an ON CONFLICT
+        // update keeps the row's id and bumps its version.
+        rowId: existing?.rowId ?? nextRowId(),
+        probeVersion: existing ? (existing.probeVersion ?? 0) + 1 : 1,
       };
-      const i = agents.findIndex(
-        (a) => a.tenantId === input.tenantId && a.agentId === input.agentId,
-      );
       if (i >= 0) agents[i] = record;
       else agents.push(record);
       return record;
@@ -70,14 +79,17 @@ function fakeStore(seed: GatewayAgentRecord[] = []) {
       );
       // Never inserts: a row gone by the time the write lands stays gone.
       if (i < 0) return null;
-      // A conditional update: an edit or delete since enumeration wins.
+      // A conditional update: an edit or delete since enumeration wins. Both
+      // the version and the row id must still match — a delete-and-reinsert
+      // can produce a new row whose version coincides with the old one.
       if ((agents[i].probeVersion ?? null) !== input.expectedVersion) return null;
+      if ((agents[i].rowId ?? null) !== input.expectedRowId) return null;
       const updated: GatewayAgentRecord = {
         ...agents[i],
         card: input.card,
         health: input.health,
         cardFetchedAt: "2026-09-11T00:00:00.000Z",
-        probeVersion: nextVersion(),
+        probeVersion: (agents[i].probeVersion ?? 0) + 1,
       };
       agents[i] = updated;
       return updated;
@@ -353,6 +365,38 @@ describe("registration refresh", () => {
     expect(f.agents).toHaveLength(0);
   });
 
+  it("does not overwrite a re-created agent whose fresh row reused the same probe version", async () => {
+    const seeded: GatewayAgentRecord = { ...agent, rowId: 1, probeVersion: 1 };
+    const f = fakeStore([seeded]);
+    // The sweep enumerated `seeded` (rowId 1, version 1). Before its probe's
+    // write lands, the tenant deletes the agent and registers it again at a
+    // new endpoint — a brand new row, which also starts at version 1.
+    f.agents.length = 0;
+    await f.store.registerAgent({
+      tenantId: seeded.tenantId,
+      agentId: seeded.agentId,
+      displayName: "Replacement",
+      endpointUrl: "https://replacement.acme.example/",
+      card: validCard(),
+    });
+    const replacement = { ...f.agents[0] };
+    expect(replacement.probeVersion).toBe(1); // same version as `seeded`
+    expect(replacement.rowId).not.toBe(seeded.rowId); // but a different row
+
+    const svc = createRegistrationService({
+      store: f.store,
+      lookup: publicLookup,
+      fetchImpl: cardResponder(validCard()),
+    });
+
+    // The stale probe, still carrying `seeded`'s old rowId, lands now.
+    await svc.refresh(seeded);
+
+    // Version alone would have matched and clobbered the replacement's card
+    // and endpoint with the old probe's results; the row id must catch it.
+    expect(f.agents[0]).toEqual(replacement);
+  });
+
   it("does not undo an edit made while its probe was in flight", async () => {
     const seeded: GatewayAgentRecord = { ...agent, probeVersion: 1 };
     const f = fakeStore([seeded]);
@@ -396,6 +440,46 @@ describe("registration refresh", () => {
 
     const result = await svc.refresh(agent);
     expect(result).toEqual({ health: "unreachable", changed: false });
+  });
+
+  it("aborts the real connection when the body stalls after headers, instead of failing to cancel a locked stream", async () => {
+    // A fake `body.cancel()` (as above) always resolves, so it can't catch a
+    // regression where the real cancel path throws because `res.json()`
+    // already holds the stream's reader lock. This needs a real server, a
+    // real `Response`, and undici's real `fetch` to be a meaningful check.
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.write("{"); // headers sent; body deliberately never completes
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+
+    try {
+      const f = fakeStore([agent]);
+      const svc = createRegistrationService({
+        store: f.store,
+        ssrfPolicy: { allowInsecure: true },
+        lookup: async () => [{ address: "127.0.0.1", family: 4 }],
+        timeoutMs: 50,
+      });
+
+      const result = await svc.refresh({
+        ...agent,
+        endpointUrl: `http://127.0.0.1:${port}/`,
+      });
+      expect(result).toEqual({ health: "unreachable", changed: false });
+
+      // The fix must tear down the stalled connection, not just give up on
+      // reading it — otherwise probes of a server that keeps streaming
+      // accumulate open connections across sweeps.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const openConnections = await new Promise<number>((resolve, reject) => {
+        server.getConnections((err, count) => (err ? reject(err) : resolve(count)));
+      });
+      expect(openConnections).toBe(0);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });
 
