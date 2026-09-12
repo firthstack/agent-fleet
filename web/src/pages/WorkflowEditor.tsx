@@ -52,6 +52,7 @@ function StartRun({ name, versions }: { name: string; versions: number[] }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [started, setStarted] = useState<{ id: number; deduplicated: boolean } | null>(null);
+  const [failedRun, setFailedRun] = useState<number | null>(null);
 
   // One ref per distinct payload, so a double-click lands on the run the
   // first click opened instead of starting a second one (docs §8).
@@ -61,6 +62,7 @@ function StartRun({ name, versions }: { name: string; versions: number[] }) {
     event.preventDefault();
     setBusy(true);
     setError(null);
+    setFailedRun(null);
     try {
       const res = await startRun(name, {
         payload: JSON.parse(payload) as Record<string, unknown>,
@@ -69,15 +71,12 @@ function StartRun({ name, versions }: { name: string; versions: number[] }) {
       });
       setStarted({ id: res.run.id, deduplicated: res.deduplicated });
     } catch (err) {
-      const failed = err as { message: string; status?: number };
-      // 409 means the run row exists but its first step never went out —
-      // usually no agent offers that skill. Saying only "failed" would leave
-      // a run sitting in the list with no explanation for it.
-      setError(
-        failed.status === 409
-          ? `${failed.message}. A run was created and is not moving; connect the agent, then start a new one.`
-          : failed.message,
-      );
+      const failed = err as { message: string; status?: number; runId?: number };
+      // 409 is a step that could never have been dispatched — usually no agent
+      // offers that skill. The run exists and the driver has already ended it,
+      // so point at it rather than leaving a row in the list unexplained.
+      setError(failed.message);
+      setFailedRun(failed.status === 409 ? (failed.runId ?? null) : null);
     } finally {
       setBusy(false);
     }
@@ -119,7 +118,18 @@ function StartRun({ name, versions }: { name: string; versions: number[] }) {
       {versions.length === 0 ? (
         <p className="hint">Publish a version first.</p>
       ) : null}
-      {error ? <p className="error">{error}</p> : null}
+      {error ? (
+        <div className="error">
+          {error}
+          {failedRun !== null ? (
+            <p className="lead">
+              <Link to={`/app/runs/${failedRun}`}>Run #{failedRun}</Link> was created
+              and ended there. Connect an agent that offers the skill, then start
+              another.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       {started ? (
         <p className="lead">
           {started.deduplicated ? "Already running as " : "Started "}

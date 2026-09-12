@@ -17,6 +17,8 @@ export class ApiError extends Error {
     /** Present when the server checked a payload against a schema and it
      *  did not match — one entry per field. */
     readonly issues: PayloadIssue[] = [],
+    /** Present when a run was created and then ended by the same request. */
+    readonly runId?: number,
   ) {
     super(message);
     this.name = "ApiError";
@@ -34,6 +36,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
       error?: string;
       message?: string;
       issues?: PayloadIssue[];
+      runId?: number;
     };
     // `message` says what is actually wrong ("agent card request returned
     // 404"); `error` is the machine code behind it. Showing the code alone
@@ -42,6 +45,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
       body.message ?? body.error ?? `request failed (${res.status})`,
       res.status,
       body.issues ?? [],
+      body.runId,
     );
   }
   return (await res.json()) as T;
