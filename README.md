@@ -38,10 +38,14 @@ npm run migrate          # DATABASE_URL must be set
 npm run dev              # or: npm run build && npm start
 ```
 
-Open the gateway's root for the **run viewer** — a list of runs, how long each
-has sat in its current state, and the timeline of every step with the gap
-between them. It asks for a tenant and an agent token; it holds no credentials
-of its own.
+Open the gateway's root for the **console**. Sign up, connect an agent, write
+a workflow against the skills it advertises, start a run, and watch it move —
+a list of runs, how long each has sat in its current state, and the timeline
+of every step with the gap between them.
+
+The console is a second identity axis, not a second door onto the first one:
+people authenticate with a session on `/api/*`, agents with a bearer token on
+`/a2a/*`, and neither surface accepts the other's credential.
 
 ## Endpoints
 
@@ -57,8 +61,29 @@ of its own.
 | `GET /a2a/t/{tenant}/workflows/runs` | runs, newest first |
 | `GET /a2a/t/{tenant}/workflows/runs/{id}` | one run |
 | `GET /a2a/t/{tenant}/workflows/runs/{id}/events` | a run's timeline |
-| `GET /` | run viewer |
+| `GET /api/me` | the signed-in user and their tenant |
+| `GET /api/agents` | the tenant's agents, resolved from the session |
+| `POST /api/agents` | register an agent: fetches its card through the SSRF policy, returns a one-time token |
+| `GET /api/agents/{id}` | one agent, with the schema each skill was registered with |
+| `PATCH /api/agents/{id}` | change the endpoint (re-fetches the card) or the outbound credential |
+| `DELETE /api/agents/{id}` | remove an agent; the tasks it ran stay in the ledger |
+| `POST /api/agents/{id}/token` | rotate the inbound token, retiring every earlier one |
+| `POST /api/agents/{id}/messages` | send a message as a person — caller `user:{id}`, no callback; the payload is checked against the skill's `inputSchema` before anything is dispatched |
+| `GET /api/tasks/{id}` | poll one task, which is how the console reads a result |
+| `GET /api/workflows` | published definitions |
+| `GET /api/workflows/{name}/{version\|latest}` | one definition, for the editor to open |
+| `PUT /api/workflows/{name}/{version}` | publish a version (validated on the way in) |
+| `POST /api/workflows/validate` | check without saving — what the editor calls as you type. Returns `issues` (the definition against itself, blocking) and `warnings` (against the tenant's connected agents, advisory) |
+| `POST /api/workflows/{name}/runs` | start a run as a person: `created_by` is `user:{id}` |
+| `GET /api/runs` | runs, newest first |
+| `GET /api/runs/{id}` | one run, with the step it is waiting on |
+| `GET /api/runs/{id}/events` | a run's timeline |
+| `GET /` and `/app/*` | the console (static; unmatched paths fall back to the SPA shell) |
 | `GET /healthz` | liveness |
+
+`/a2a/*` is bearer-only and `/api/*` is session-only, deliberately: one
+endpoint accepting both would give the machine surface a CSRF face it never
+needed, and would make `caller_agent_id` stop being one kind of thing.
 
 Cross-tenant requests answer `404`, not `403`: a `403` would confirm that some
 other tenant owns that agent id.

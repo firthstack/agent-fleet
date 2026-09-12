@@ -488,6 +488,20 @@ export class GatewayStore {
   }
 
   /**
+   * Remove an agent. Its skills, tokens and outbound credential go with it
+   * (ON DELETE CASCADE); its tasks do not, because `fleet_tasks` names agents
+   * by text rather than by key — the ledger of what ran is not the registry's
+   * to erase.
+   */
+  async deleteAgent(tenantId: number, agentId: string): Promise<boolean> {
+    const { rowCount } = await this.pool.query(
+      `DELETE FROM fleet_agents WHERE tenant_id = $1 AND agent_id = $2`,
+      [tenantId, agentId],
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
+  /**
    * Every agent in this tenant offering `skillId`. Deliberately returns all
    * matches: the gateway never picks one on the caller's behalf (docs §6.1).
    */
@@ -523,6 +537,34 @@ export class GatewayStore {
        VALUES ($1, $2, $3)`,
       [tenantId, agentId, tokenHash],
     );
+  }
+
+  /**
+   * Issue a replacement and retire everything before it, in one transaction.
+   *
+   * The order matters and so does the atomicity: revoking first would lock the
+   * agent out if the insert then failed, and doing it in two statements would
+   * leave a window where both the old and the new token work. A rotation is a
+   * response to a leak often enough that the window is the point.
+   */
+  async rotateAgentToken(
+    tenantId: number,
+    agentId: string,
+    newTokenHash: string,
+  ): Promise<{ revoked: number }> {
+    return this.withTransaction(async (client) => {
+      const { rowCount } = await client.query(
+        `UPDATE fleet_agent_tokens SET revoked_at = now()
+         WHERE tenant_id = $1 AND agent_id = $2 AND revoked_at IS NULL`,
+        [tenantId, agentId],
+      );
+      await client.query(
+        `INSERT INTO fleet_agent_tokens (tenant_id, agent_id, token_hash)
+         VALUES ($1, $2, $3)`,
+        [tenantId, agentId, newTokenHash],
+      );
+      return { revoked: rowCount ?? 0 };
+    });
   }
 
   async revokeAgentToken(tokenHash: string): Promise<void> {
@@ -606,6 +648,15 @@ export class GatewayStore {
       secret: opened.secret,
       ...(opened.headerName ? { headerName: opened.headerName } : {}),
     };
+  }
+
+  /** An agent that stopped wanting authentication. The row is dropped rather
+   *  than blanked: an empty secret would still send an empty header. */
+  async deleteAgentCredential(tenantId: number, agentId: string): Promise<void> {
+    await this.pool.query(
+      `DELETE FROM fleet_agent_credentials WHERE tenant_id = $1 AND agent_id = $2`,
+      [tenantId, agentId],
+    );
   }
 
   private requireSecretBox(): SecretBox {

@@ -127,6 +127,12 @@ export interface RegistrationStorePort {
     agentId: string,
     credential: AgentCredential,
   ): Promise<void>;
+  deleteAgentCredential(tenantId: number, agentId: string): Promise<void>;
+  rotateAgentToken(
+    tenantId: number,
+    agentId: string,
+    newTokenHash: string,
+  ): Promise<{ revoked: number }>;
 }
 
 export interface RegistrationDeps {
@@ -239,6 +245,70 @@ export function createRegistrationService(deps: RegistrationDeps) {
       );
 
       return { agent, token };
+    },
+
+    /**
+     * Replace the agent's inbound token. Everything issued before it stops
+     * working the moment this returns, so an agent mid-dispatch will fail its
+     * callback until the new value is in its config — which is the correct
+     * trade when the reason to rotate is that the old one leaked.
+     */
+    async rotateToken(
+      agent: Pick<GatewayAgentRecord, "tenantId" | "agentId">,
+    ): Promise<{ token: string; revoked: number }> {
+      const token = mintToken();
+      const { revoked } = await deps.store.rotateAgentToken(
+        agent.tenantId,
+        agent.agentId,
+        hashToken(token),
+      );
+      return { token, revoked };
+    },
+
+    /**
+     * Change an agent in place.
+     *
+     * A new endpoint is not a field write: the card lives at the endpoint, so
+     * the URL goes through the same SSRF policy and card validation as a fresh
+     * registration, and what gets stored is what actually answered there. An
+     * agent that moved to an address serving nothing keeps its old row.
+     *
+     * `credential: null` clears the outbound credential; omitting it leaves
+     * whatever is stored alone, so a display-name edit cannot silently drop
+     * the secret the gateway calls this agent with.
+     */
+    async update(
+      agent: GatewayAgentRecord,
+      changes: {
+        displayName?: string;
+        endpointUrl?: string;
+        credential?: AgentCredential | null;
+      },
+    ): Promise<GatewayAgentRecord> {
+      const endpointUrl = changes.endpointUrl ?? agent.endpointUrl;
+      const moved = endpointUrl !== agent.endpointUrl;
+      const card = moved ? await fetchCard(endpointUrl) : agent.card;
+
+      const updated = await deps.store.registerAgent({
+        tenantId: agent.tenantId,
+        agentId: agent.agentId,
+        displayName: changes.displayName ?? (moved ? card.name : agent.displayName),
+        endpointUrl,
+        card,
+        health: moved ? "healthy" : agent.health,
+      });
+
+      if (changes.credential === null) {
+        await deps.store.deleteAgentCredential(agent.tenantId, agent.agentId);
+      } else if (changes.credential) {
+        await deps.store.putAgentCredential(
+          agent.tenantId,
+          agent.agentId,
+          changes.credential,
+        );
+      }
+
+      return updated;
     },
 
     /**

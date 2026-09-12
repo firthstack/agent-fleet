@@ -7,7 +7,10 @@ import { GatewayStore } from "./fleet/site/gatewayStore.js";
 import { fleetDatabaseUrlFromEnv } from "./fleet/site/db.js";
 import { fleetSecretBoxFromEnv } from "./fleet/site/secretBox.js";
 import { createA2AClient } from "./fleet/site/a2aClient.js";
-import { hashToken } from "./fleet/site/registration.js";
+import {
+  createRegistrationService,
+  hashToken,
+} from "./fleet/site/registration.js";
 import {
   createFleetSiteServer,
   fleetPublicBaseUrlFromEnv,
@@ -17,6 +20,7 @@ import { createWorkflowDriver } from "./fleet/workflow/driver.js";
 import { createWorkflowDispatcher } from "./fleet/workflow/dispatcher.js";
 import { createAuth } from "./auth.js";
 import { createConsoleHandler } from "./fleet/console/api.js";
+import { createConsoleMessenger } from "./fleet/console/messages.js";
 
 dotenv.config();
 
@@ -60,6 +64,32 @@ async function main(): Promise<void> {
     },
   });
 
+  // Agent onboarding from the browser. `allowInsecure` exists for a local
+  // gateway talking to an agent on http://127.0.0.1 — off anywhere else,
+  // because from here the SSRF checks are what stands between an account and
+  // an outbound request to an address of the caller's choosing (docs §9.2).
+  const allowInsecureAgents = process.env.FLEET_ALLOW_INSECURE_AGENTS === "1";
+  if (allowInsecureAgents) {
+    log.warn(
+      "FLEET_ALLOW_INSECURE_AGENTS=1: http and private-address agent endpoints are accepted",
+    );
+  }
+  const registration = createRegistrationService({
+    store,
+    ...(allowInsecureAgents ? { ssrfPolicy: { allowInsecure: true } } : {}),
+  });
+
+  // A person sending a message from the dashboard. Same task ledger, same
+  // callback chain; only the caller identity differs (docs §8).
+  const messenger = createConsoleMessenger({
+    store,
+    client: createA2AClient(),
+    publicBaseUrl,
+    newUpstreamTaskId: () => randomBytes(16).toString("hex"),
+    newCallbackToken: () => randomBytes(32).toString("base64url"),
+    hashToken,
+  });
+
   const server = createFleetSiteServer({
     store,
     publicBaseUrl,
@@ -72,6 +102,12 @@ async function main(): Promise<void> {
     console: createConsoleHandler({
       auth,
       store,
+      registration,
+      messenger,
+      // The same composition layer the machine surface drives, reached
+      // through a session instead of a bearer token (docs §3).
+      workflows,
+      workflowStarter: driver,
       origin: publicBaseUrl,
       logger: log,
     }),

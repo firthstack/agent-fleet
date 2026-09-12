@@ -4,8 +4,8 @@
 
 | | |
 |---|---|
-| **状态** | 草案，待评审 |
-| **日期** | 2026-09-11 |
+| **状态** | 已实现，五期全部落地 |
+| **日期** | 2026-09-11（实现完成 2026-09-12） |
 | **前置** | [fleet-a2a-gateway.md](fleet-a2a-gateway.md)、[fleet-composition-layer.md](fleet-composition-layer.md) |
 | **重点** | §2 身份这条新轴 · §3 三个表面的边界 · §9 安全 |
 
@@ -195,6 +195,29 @@ DROP TABLE fleet_users;   -- 从未被使用
 
 人类发起的消息**没有回调对象**（浏览器不是 webhook 目标）。所以它和 workflow 步骤一样，由轮询读结果：前端调 `GET /api/runs/...` 或一个对应的任务查询端点。
 
+### 8.1 payload 按 card 的 inputSchema 校验
+
+原先发消息只检查"card 里有没有这个 skill id"。skill 的 `inputSchema`（网关文档 §5）落了库、也显示在 agent 详情页上，却不参与任何判断——一个字段拼错的 payload 会一路飞到 agent，几分钟到几小时后以一个失败回调的形式回来。
+
+现在两处都用它校验，共用 `src/fleet/validation/payload.ts`（ajv）：
+
+**发消息**（`POST /api/agents/:id/messages`）值是字面量，完整校验，不符 400 并逐字段列出。校验发生在**写 task 行之前**，所以被拒的消息不会在账本里留下任何需要事后解释的东西。skill 没声明 schema 就不校验——`inputSchema` 在 card 上是可选的，我们不替 agent 作者发明规则。
+
+**workflow 的 `call.payload`** 值多半是模板，`"{{vars.requirement}}"` 要到派发时才由 `resolveValue` 求值，类型在编辑期不可知。所以那些位置被**排除**而不是猜测：把模板位置替换成占位送进 ajv，再把落在模板路径上的错误滤掉。剩下仍然查得动的是**键集**（必填缺没缺、有没有 skill 没声明的键）和**字面量的类型**。
+
+注意排除的粒度：键是写死的、只有值是模板，所以"多了一个 skill 没声明的键"这种错报在父对象上，即便那个键的值是模板也照样报出来。
+
+### 8.2 编辑器还对照真实 fleet
+
+`POST /api/workflows/validate` 现在返回两组结果：
+
+- `issues` —— 定义对照它自己（`validateDefinition`），**阻断发布**
+- `warnings` —— 定义对照这个租户**已连接的 agent**，**不阻断**
+
+warnings 有两类：没有 agent 提供这个技能，以及 payload 不符合该技能的 schema。前者正是 dispatcher 在运行时会拒绝的 `no_agent`——区别是到那时 run 已经建好，然后卡死在第一个状态。
+
+不阻断是故意的：定义完全可能先于服务它的 agent 写出来，用发布去强迫一个连接顺序不是网关该管的事。
+
 ---
 
 ## 9. 安全
@@ -240,7 +263,11 @@ dist/web/       Vite 产出的前端资源
 
 `npm run build` 串起两步。网关在非 `/api`、非 `/a2a` 的路径上托管 `dist/web`，未命中的路径回落到 `index.html`（SPA 路由）。
 
-新增环境变量：`BETTER_AUTH_SECRET`、`BETTER_AUTH_URL`、`GITHUB_CLIENT_ID`、`GITHUB_CLIENT_SECRET`。`.env.example` 的漂移守卫要跟着更新。
+新增环境变量：`BETTER_AUTH_SECRET`、`FLEET_TRUSTED_ORIGINS`、`GITHUB_CLIENT_ID`、`GITHUB_CLIENT_SECRET`、`FLEET_WEB_ROOT`。
+
+本文原先还列了 `BETTER_AUTH_URL`，实现时没有采纳：它和 `FLEET_PUBLIC_BASE_URL` 说的是同一件事，而"这个进程对外是什么地址"有两个来源就迟早会不一致——Better Auth 的 `baseURL` 直接由 `FLEET_PUBLIC_BASE_URL` 推导。
+
+漂移守卫此前并不存在（它留在 john-bot 里没跟过来），现在补上了：`test/fleet/envExample.test.ts` 扫描 `src/` 里每一处 `process.env.X`，少一个就红。
 
 ---
 
@@ -248,13 +275,18 @@ dist/web/       Vite 产出的前端资源
 
 每一期结束时系统都是可用的，不存在「做完三期才能跑」的阶段。
 
-| 期 | 内容 | 结束时可以 |
-|---|---|---|
-| **1** | Better Auth 接入、`fleet_tenant_members`、`/api/me`、登录页、SPA 骨架 | 注册、登录、看到一个空 dashboard |
-| **2** | agent 接入与列表、token 轮换 | 从浏览器把自己的 agent 接进来 |
-| **3** | run 列表与详情（观察器搬家） | 看到执行状态，`/` 上那个要 agent token 的折中消失 |
-| **4** | workflow 编辑器、发布、启动 run | 完整闭环 |
-| **5** | 落地页 | 可以对外 |
+| 期 | 内容 | 结束时可以 | 状态 |
+|---|---|---|---|
+| **1** | Better Auth 接入、`fleet_tenant_members`、`/api/me`、登录页、SPA 骨架 | 注册、登录、看到一个空 dashboard | ✅ |
+| **2** | agent 接入与列表、token 轮换 | 从浏览器把自己的 agent 接进来 | ✅ |
+| **3** | run 列表与详情（观察器搬家） | 看到执行状态，`/` 上那个要 agent token 的折中消失 | ✅ |
+| **4** | workflow 编辑器、发布、启动 run | 完整闭环 | ✅ |
+| **5** | 落地页 | 可以对外 | ✅ |
+
+实现时偏离本文的两处，都记在这里：
+
+- **第 5 期提前做了。** 排在最后的理由（产品没定型容易返工）成立，但落地页同时是第 1 期 SPA 骨架的载体，分开做等于把同一个构建产物搭两遍。
+- **`/api/agents` 比 §5 的表多出 `PATCH` 与 `DELETE`。** 接入一个 agent 之后紧接着就是改地址和摘除，只给 `POST` 会让"接进来"这件事只有一半。
 
 落地页排在最后是故意的：它是最容易写、也最容易因为产品还没定型而返工的东西。
 
@@ -266,4 +298,4 @@ dist/web/       Vite 产出的前端资源
 - **Better Auth 的表怎么进迁移序列。** 它的 CLI 生成 schema，而我们的 `scripts/migrate.mjs` 是按文件顺序重放的。最简单是把生成的 SQL 落成一个编号迁移文件，代价是它升级时要手工同步。需要验证一遍流程。
 - **落地页要不要独立部署。** 放在同一个进程里最省事，但营销页和平台的发布节奏通常不同。
 - **一个用户多个租户。** 本期一对一。`fleet_tenant_members` 已经能表达多对多，但 UI、切换器、邀请流程都还没有。
-- **agent 健康状态的刷新由谁触发。** 现在没有后台巡检（网关文档 §5 第 5 步只写了设计）。dashboard 会让「unreachable」这个状态变得可见，所以这件事的优先级上来了。
+- **agent 健康状态的刷新由谁触发。** `registration.refresh()` 已经写好，但**没有任何调用方**——没有后台巡检（网关文档 §5 第 5 步只写了设计），也没有手动刷新端点。于是 health 只在注册那一刻写一次，`unreachable` / `stale` 实际上永远不会出现，agent 列表和 dashboard 上的健康标签是个恒为 `healthy` 的装饰。五期做完之后，这是最该接着做的一件事。

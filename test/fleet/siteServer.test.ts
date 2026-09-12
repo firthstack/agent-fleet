@@ -268,14 +268,15 @@ describe("fleet site server", () => {
     expect(res.status).toBe(404);
   });
 
-  it("serves the run viewer at the root", async () => {
+  it("no longer answers the root with a page that asks for an agent token", async () => {
+    // The standalone run viewer is gone (docs/fleet-console.md §4). With no
+    // built SPA there is simply nothing at the root: the console reads the
+    // same runs out of a session, and a browser prompt for an *agent* token
+    // was only ever a stand-in for the identity axis that now exists.
     const base = await listen(fakeStore().store);
     const res = await fetch(`${base}/`);
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toContain("text/html");
-    const html = await res.text();
-    // It holds no credentials of its own; it asks for an agent token.
-    expect(html).toContain("agent token");
+    expect(res.status).toBe(404);
+    expect(res.headers.get("content-type")).toContain("application/json");
   });
 
   it("returns 404 for an unknown path", async () => {

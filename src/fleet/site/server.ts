@@ -13,7 +13,6 @@ import type { CallbackStorePort } from "./callbacks.js";
 import type { AgentCredential } from "./a2aClient.js";
 import { hashToken } from "./registration.js";
 import type { SecretBox } from "./secretBox.js";
-import { RUN_VIEWER_HTML } from "./runViewer.js";
 import { createStaticHandler } from "./staticFiles.js";
 import type { IncomingMessage as NodeRequest, ServerResponse as NodeResponse } from "node:http";
 
@@ -141,19 +140,10 @@ export function createFleetSiteHandler(opts: FleetSiteOptions) {
         if (await opts.console(req, res)) return;
       }
 
-      // The standalone run viewer, kept only for a deployment with no built
-      // SPA. Once the console is serving, /app/runs is the real one and this
-      // page's "paste an agent token" compromise goes away.
-      if (
-        !serveStatic &&
-        method === "GET" &&
-        (url.pathname === "/" || url.pathname === "/runs")
-      ) {
-        res.statusCode = 200;
-        res.setHeader("content-type", "text/html; charset=utf-8");
-        res.end(RUN_VIEWER_HTML);
-        return;
-      }
+      // The standalone run viewer used to sit here. `/app/runs` replaces it
+      // (docs/fleet-console.md §4): it reads the same runs out of a session
+      // instead of asking the user to paste an *agent* token into a browser,
+      // which was only ever a stand-in for an identity we did not have yet.
 
       // Static last among the GET surfaces: /a2a and /api claim their prefixes
       // above, and anything else that is not a real file falls back to the

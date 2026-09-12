@@ -30,7 +30,12 @@ function validCard(): A2AAgentCard {
 
 function fakeStore(seed: GatewayAgentRecord[] = []) {
   const agents = [...seed];
-  const tokens: Array<{ tenantId: number; agentId: string; hash: string }> = [];
+  const tokens: Array<{
+    tenantId: number;
+    agentId: string;
+    hash: string;
+    revoked?: boolean;
+  }> = [];
   const creds: Array<{ tenantId: number; agentId: string; credential: AgentCredential }> = [];
 
   const store: RegistrationStorePort = {
@@ -60,6 +65,23 @@ function fakeStore(seed: GatewayAgentRecord[] = []) {
     },
     async putAgentCredential(tenantId, agentId, credential) {
       creds.push({ tenantId, agentId, credential });
+    },
+    async deleteAgentCredential(tenantId, agentId) {
+      for (let i = creds.length - 1; i >= 0; i -= 1) {
+        const c = creds[i];
+        if (c.tenantId === tenantId && c.agentId === agentId) creds.splice(i, 1);
+      }
+    },
+    async rotateAgentToken(tenantId, agentId, hash) {
+      let revoked = 0;
+      for (const t of tokens) {
+        if (t.tenantId === tenantId && t.agentId === agentId && !t.revoked) {
+          t.revoked = true;
+          revoked += 1;
+        }
+      }
+      tokens.push({ tenantId, agentId, hash });
+      return { revoked };
     },
   };
 

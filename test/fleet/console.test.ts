@@ -2,11 +2,15 @@ import { randomBytes } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
-import { GenericContainer, type StartedTestContainer } from "testcontainers";
+import type { StartedTestContainer } from "testcontainers";
+import { startPostgres } from "./support/postgres.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { GatewayStore } from "../../src/fleet/site/gatewayStore.js";
 import { createFleetSiteServer } from "../../src/fleet/site/server.js";
 import { createConsoleHandler } from "../../src/fleet/console/api.js";
+import { createRegistrationService, hashToken } from "../../src/fleet/site/registration.js";
+import { createConsoleMessenger } from "../../src/fleet/console/messages.js";
+import { createA2AClient } from "../../src/fleet/site/a2aClient.js";
 import { createAuth } from "../../src/auth.js";
 
 /**
@@ -28,17 +32,9 @@ process.env.BETTER_AUTH_SECRET ??= randomBytes(32).toString("base64url");
 beforeAll(async () => {
   let connectionString = EXTERNAL_URL;
   if (!connectionString) {
-    container = await new GenericContainer("postgres:16")
-      .withEnvironment({
-        POSTGRES_USER: "admin",
-        POSTGRES_PASSWORD: "admin",
-        POSTGRES_DB: "fleet_test",
-      })
-      .withExposedPorts(5432)
-      .start();
-    connectionString = `postgres://admin:admin@${container.getHost()}:${container.getMappedPort(
-      5432,
-    )}/fleet_test?sslmode=disable`;
+    const started = await startPostgres();
+    container = started.container;
+    connectionString = started.connectionString;
   }
 
   store = new GatewayStore({ connectionString, insecureSsl: !EXTERNAL_URL });
@@ -65,7 +61,20 @@ beforeAll(async () => {
   server = createFleetSiteServer({
     store,
     publicBaseUrl: base,
-    console: createConsoleHandler({ auth, store, origin: base }),
+    console: createConsoleHandler({
+      auth,
+      store,
+      registration: createRegistrationService({ store }),
+      messenger: createConsoleMessenger({
+        store,
+        client: createA2AClient(),
+        publicBaseUrl: base,
+        newUpstreamTaskId: () => randomBytes(16).toString("hex"),
+        newCallbackToken: () => randomBytes(32).toString("base64url"),
+        hashToken,
+      }),
+      origin: base,
+    }),
   });
   await new Promise<void>((r) => server!.listen(port, "127.0.0.1", r));
 }, 180_000);
