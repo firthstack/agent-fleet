@@ -214,6 +214,9 @@ function storeWith(agents: GatewayAgentRecord[] = []): ConsoleStore {
   async deleteAgent() {
     return false;
   },
+  async agentTaskStats() {
+    return new Map();
+  },
   async getTask() {
     return null;
   },

@@ -61,6 +61,15 @@ export interface AgentSkill {
   inputSchema: unknown | null;
 }
 
+export interface AgentStats {
+  totalRuns: number;
+  succeeded: number;
+  failed: number;
+  running: number;
+  /** `createdAt` of the oldest still-active run; null when none are active. */
+  runningSince: string | null;
+}
+
 export interface Agent {
   agentId: string;
   displayName: string;
@@ -69,6 +78,7 @@ export interface Agent {
   skills: AgentSkill[];
   cardFetchedAt: string | null;
   lastSeenAt: string | null;
+  stats: AgentStats;
 }
 
 export interface RegisterAgentInput {

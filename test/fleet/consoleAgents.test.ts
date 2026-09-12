@@ -188,6 +188,34 @@ function fixture() {
     async getAgent(tenantId, agentId) {
       return agents.find((a) => a.tenantId === tenantId && a.agentId === agentId) ?? null;
     },
+    async agentTaskStats(tenantId, agentId) {
+      const stats = new Map<
+        string,
+        { totalRuns: number; succeeded: number; failed: number; running: number; runningSince: string | null }
+      >();
+      for (const task of tasks) {
+        if (task.tenantId !== tenantId) continue;
+        if (agentId !== undefined && task.targetAgentId !== agentId) continue;
+        const entry = stats.get(task.targetAgentId) ?? {
+          totalRuns: 0,
+          succeeded: 0,
+          failed: 0,
+          running: 0,
+          runningSince: null as string | null,
+        };
+        entry.totalRuns += 1;
+        if (task.state === "done" || task.state === "done_pending_notify") entry.succeeded += 1;
+        else if (task.state === "failed" || task.state === "timed_out") entry.failed += 1;
+        else if (task.state === "dispatching" || task.state === "running") {
+          entry.running += 1;
+          if (entry.runningSince === null || task.createdAt < entry.runningSince) {
+            entry.runningSince = task.createdAt;
+          }
+        }
+        stats.set(task.targetAgentId, entry);
+      }
+      return stats;
+    },
     async deleteAgent(tenantId, agentId) {
       const i = agents.findIndex((a) => a.tenantId === tenantId && a.agentId === agentId);
       if (i < 0) return false;
@@ -401,6 +429,100 @@ describe("POST /api/agents", () => {
     // A registration makes the gateway fetch a URL of the caller's choosing;
     // an unauthenticated one would be an open proxy.
     expect((await h.call("/api/agents")).status).toBe(401);
+  });
+});
+
+describe("GET /api/agents — run stats on the card", () => {
+  it("defaults to all zeros when the agent has never run", async () => {
+    const h = await harness();
+    await h.register(valid);
+
+    const res = await h.list();
+    expect(res.body).toMatchObject({
+      agents: [
+        {
+          agentId: "review-agent",
+          stats: { totalRuns: 0, succeeded: 0, failed: 0, running: 0, runningSince: null },
+        },
+      ],
+    });
+  });
+
+  it("counts runs by outcome and reports how long the oldest active one has been running", async () => {
+    const h = await harness();
+    await h.register(valid);
+
+    const base: FleetTaskRecord = {
+      id: 0,
+      tenantId: TENANTS.ada.id,
+      upstreamTaskId: "",
+      callerAgentId: "user:ada",
+      callerCallbackUrl: null,
+      callerCallbackAuth: null,
+      targetAgentId: "review-agent",
+      skillId: "review.pr",
+      downstreamTaskId: null,
+      state: "done",
+      attempt: 0,
+      nextRetryAt: null,
+      deadlineAt: "2026-09-11T01:00:00.000Z",
+      result: null,
+      notifiedAt: null,
+      createdAt: "2026-09-11T00:00:00.000Z",
+      updatedAt: "2026-09-11T00:00:00.000Z",
+    };
+    h.tasks.push(
+      { ...base, id: 1, upstreamTaskId: "u1", state: "done" },
+      { ...base, id: 2, upstreamTaskId: "u2", state: "failed" },
+      { ...base, id: 3, upstreamTaskId: "u3", state: "timed_out" },
+      { ...base, id: 4, upstreamTaskId: "u4", state: "running", createdAt: "2026-09-11T00:05:00.000Z" },
+      { ...base, id: 5, upstreamTaskId: "u5", state: "dispatching", createdAt: "2026-09-11T00:01:00.000Z" },
+    );
+
+    const res = await h.list();
+    expect(res.body).toMatchObject({
+      agents: [
+        {
+          agentId: "review-agent",
+          stats: {
+            totalRuns: 5,
+            succeeded: 1,
+            failed: 2,
+            running: 2,
+            runningSince: "2026-09-11T00:01:00.000Z",
+          },
+        },
+      ],
+    });
+  });
+
+  it("scopes stats to the tenant that owns the agent", async () => {
+    const h = await harness();
+    await h.register(valid, "user=ada");
+    h.tasks.push({
+      id: 1,
+      tenantId: TENANTS.bob.id,
+      upstreamTaskId: "u1",
+      callerAgentId: "user:bob",
+      callerCallbackUrl: null,
+      callerCallbackAuth: null,
+      targetAgentId: "review-agent",
+      skillId: "review.pr",
+      downstreamTaskId: null,
+      state: "done",
+      attempt: 0,
+      nextRetryAt: null,
+      deadlineAt: "2026-09-11T01:00:00.000Z",
+      result: null,
+      notifiedAt: null,
+      createdAt: "2026-09-11T00:00:00.000Z",
+      updatedAt: "2026-09-11T00:00:00.000Z",
+    });
+
+    const res = await h.list();
+    expect(res.body).toMatchObject({
+      agents: [{ agentId: "review-agent", stats: { totalRuns: 0 } }],
+    });
   });
 });
 
@@ -656,6 +778,57 @@ describe("GET /api/agents/:id", () => {
         agentId: "review-agent",
         skills: [{ id: "review.pr", inputSchema: { type: "object" } }],
       },
+    });
+  });
+
+  it("includes run stats scoped to just this agent", async () => {
+    const h = await harness();
+    await h.register(valid);
+    await h.register({ agentId: "other-agent", endpointUrl: "https://other.example/" });
+    h.tasks.push(
+      {
+        id: 1,
+        tenantId: TENANTS.ada.id,
+        upstreamTaskId: "u1",
+        callerAgentId: "user:ada",
+        callerCallbackUrl: null,
+        callerCallbackAuth: null,
+        targetAgentId: "review-agent",
+        skillId: "review.pr",
+        downstreamTaskId: null,
+        state: "done",
+        attempt: 0,
+        nextRetryAt: null,
+        deadlineAt: "2026-09-11T01:00:00.000Z",
+        result: null,
+        notifiedAt: null,
+        createdAt: "2026-09-11T00:00:00.000Z",
+        updatedAt: "2026-09-11T00:00:00.000Z",
+      },
+      {
+        id: 2,
+        tenantId: TENANTS.ada.id,
+        upstreamTaskId: "u2",
+        callerAgentId: "user:ada",
+        callerCallbackUrl: null,
+        callerCallbackAuth: null,
+        targetAgentId: "other-agent",
+        skillId: "x",
+        downstreamTaskId: null,
+        state: "failed",
+        attempt: 0,
+        nextRetryAt: null,
+        deadlineAt: "2026-09-11T01:00:00.000Z",
+        result: null,
+        notifiedAt: null,
+        createdAt: "2026-09-11T00:00:00.000Z",
+        updatedAt: "2026-09-11T00:00:00.000Z",
+      },
+    );
+
+    const res = await h.call("/api/agents/review-agent", { headers: { cookie: "user=ada" } });
+    expect(res.body).toMatchObject({
+      agent: { agentId: "review-agent", stats: { totalRuns: 1, succeeded: 1, failed: 0 } },
     });
   });
 
