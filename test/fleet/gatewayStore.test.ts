@@ -176,6 +176,95 @@ describe("GatewayStore tenancy", () => {
   });
 });
 
+describe("GatewayStore.updateAgentProbe", () => {
+  it("writes health and card when the expected version still matches", async () => {
+    const acme = await store.ensureTenant({ slug: "acme", displayName: "Acme" });
+    await store.registerAgent({
+      tenantId: acme.id,
+      agentId: "dev-agent",
+      displayName: "dev",
+      endpointUrl: "https://dev.acme.example/",
+      card: card(),
+    });
+    const probed = await store.getAgent(acme.id, "dev-agent");
+
+    const nextCard = card({
+      skills: [{ id: "develop.revise", name: "Revise", description: "Revise a PR." }],
+    });
+    const updated = await store.updateAgentProbe({
+      tenantId: acme.id,
+      agentId: "dev-agent",
+      expectedVersion: probed!.probeVersion!,
+      card: nextCard,
+      health: "healthy",
+    });
+
+    expect(updated?.card.skills[0].id).toBe("develop.revise");
+    expect(await store.findAgentsBySkill(acme.id, "develop.issue")).toEqual([]);
+    expect((await store.findAgentsBySkill(acme.id, "develop.revise")).length).toBe(1);
+  });
+
+  it("refuses to write when the row changed since the version was captured", async () => {
+    const acme = await store.ensureTenant({ slug: "acme", displayName: "Acme" });
+    await store.registerAgent({
+      tenantId: acme.id,
+      agentId: "dev-agent",
+      displayName: "dev",
+      endpointUrl: "https://dev.acme.example/",
+      card: card(),
+    });
+    const stale = await store.getAgent(acme.id, "dev-agent");
+
+    // A concurrent edit lands after the version above was captured.
+    await store.registerAgent({
+      tenantId: acme.id,
+      agentId: "dev-agent",
+      displayName: "renamed by tenant",
+      endpointUrl: "https://dev.acme.example/",
+      card: card(),
+    });
+
+    const result = await store.updateAgentProbe({
+      tenantId: acme.id,
+      agentId: "dev-agent",
+      expectedVersion: stale!.probeVersion!,
+      card: card({ skills: [{ id: "develop.stale", name: "n", description: "d" }] }),
+      health: "unreachable",
+    });
+
+    expect(result).toBeNull();
+    // The edit survives untouched — the stale probe must not clobber it.
+    expect((await store.getAgent(acme.id, "dev-agent"))?.displayName).toBe(
+      "renamed by tenant",
+    );
+    expect(await store.findAgentsBySkill(acme.id, "develop.stale")).toEqual([]);
+  });
+
+  it("never inserts a row for an agent deleted before the write lands", async () => {
+    const acme = await store.ensureTenant({ slug: "acme", displayName: "Acme" });
+    await store.registerAgent({
+      tenantId: acme.id,
+      agentId: "dev-agent",
+      displayName: "dev",
+      endpointUrl: "https://dev.acme.example/",
+      card: card(),
+    });
+    const stale = await store.getAgent(acme.id, "dev-agent");
+    await store.deleteAgent(acme.id, "dev-agent");
+
+    const result = await store.updateAgentProbe({
+      tenantId: acme.id,
+      agentId: "dev-agent",
+      expectedVersion: stale!.probeVersion!,
+      card: card(),
+      health: "healthy",
+    });
+
+    expect(result).toBeNull();
+    expect(await store.getAgent(acme.id, "dev-agent")).toBeNull();
+  });
+});
+
 describe("GatewayStore agent tokens", () => {
   it("resolves a token to exactly one (tenant, agent) pair", async () => {
     const acme = await store.ensureTenant({ slug: "acme", displayName: "Acme" });

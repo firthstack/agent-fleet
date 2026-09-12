@@ -31,6 +31,8 @@ function validCard(): A2AAgentCard {
 
 function fakeStore(seed: GatewayAgentRecord[] = []) {
   const agents = [...seed];
+  let clock = 0;
+  const nextVersion = () => ++clock;
   const tokens: Array<{
     tenantId: number;
     agentId: string;
@@ -53,6 +55,7 @@ function fakeStore(seed: GatewayAgentRecord[] = []) {
         health: input.health ?? "healthy",
         cardFetchedAt: "2026-09-11T00:00:00.000Z",
         lastSeenAt: null,
+        probeVersion: nextVersion(),
       };
       const i = agents.findIndex(
         (a) => a.tenantId === input.tenantId && a.agentId === input.agentId,
@@ -60,6 +63,24 @@ function fakeStore(seed: GatewayAgentRecord[] = []) {
       if (i >= 0) agents[i] = record;
       else agents.push(record);
       return record;
+    },
+    async updateAgentProbe(input) {
+      const i = agents.findIndex(
+        (a) => a.tenantId === input.tenantId && a.agentId === input.agentId,
+      );
+      // Never inserts: a row gone by the time the write lands stays gone.
+      if (i < 0) return null;
+      // A conditional update: an edit or delete since enumeration wins.
+      if ((agents[i].probeVersion ?? null) !== input.expectedVersion) return null;
+      const updated: GatewayAgentRecord = {
+        ...agents[i],
+        card: input.card,
+        health: input.health,
+        cardFetchedAt: "2026-09-11T00:00:00.000Z",
+        probeVersion: nextVersion(),
+      };
+      agents[i] = updated;
+      return updated;
     },
     async issueAgentToken(tenantId, agentId, hash) {
       tokens.push({ tenantId, agentId, hash });
@@ -310,6 +331,71 @@ describe("registration refresh", () => {
 
     expect(await svc.refresh(agent)).toEqual({ health: "healthy", changed: true });
     expect(f.agents[0].card.skills[0].id).toBe("review.pr2");
+  });
+
+  it("does not resurrect an agent deleted while its probe was in flight", async () => {
+    const seeded: GatewayAgentRecord = { ...agent, probeVersion: 1 };
+    const f = fakeStore([seeded]);
+    // The sweep enumerated `seeded` before this delete happened; its probe
+    // is still holding that stale snapshot when the delete lands.
+    f.agents.length = 0;
+
+    const svc = createRegistrationService({
+      store: f.store,
+      lookup: publicLookup,
+      fetchImpl: cardResponder(validCard()),
+    });
+
+    const result = await svc.refresh(seeded);
+    expect(result.health).toBe("healthy");
+    // Must never come back via an insert — the row, and everything that
+    // cascaded from it (tokens, credentials), stays deleted.
+    expect(f.agents).toHaveLength(0);
+  });
+
+  it("does not undo an edit made while its probe was in flight", async () => {
+    const seeded: GatewayAgentRecord = { ...agent, probeVersion: 1 };
+    const f = fakeStore([seeded]);
+    // A tenant edits the agent after enumeration captured `seeded` but
+    // before the outstanding probe's write lands.
+    const edited: GatewayAgentRecord = {
+      ...seeded,
+      displayName: "Renamed By Tenant",
+      endpointUrl: "https://moved.acme.example/",
+      probeVersion: 2,
+    };
+    f.agents[0] = edited;
+
+    const svc = createRegistrationService({
+      store: f.store,
+      lookup: publicLookup,
+      fetchImpl: cardResponder(validCard()),
+    });
+
+    await svc.refresh(seeded);
+    // The edit survives untouched — the stale probe must not restore the
+    // old displayName/endpointUrl or bump past the edit's version.
+    expect(f.agents[0]).toEqual(edited);
+  });
+
+  it("does not hang when headers arrive but the response body never completes", async () => {
+    const f = fakeStore([agent]);
+    const svc = createRegistrationService({
+      store: f.store,
+      lookup: publicLookup,
+      timeoutMs: 20,
+      fetchImpl: (async () => ({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        // Headers "arrived"; the body never finishes.
+        json: () => new Promise(() => {}),
+        body: { cancel: async () => {} },
+      })) as unknown as typeof fetch,
+    });
+
+    const result = await svc.refresh(agent);
+    expect(result).toEqual({ health: "unreachable", changed: false });
   });
 });
 

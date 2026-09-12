@@ -133,6 +133,17 @@ export interface RegistrationStorePort {
     agentId: string,
     newTokenHash: string,
   ): Promise<{ revoked: number }>;
+  /**
+   * Conditional write used by the health sweep: never inserts, and only
+   * lands if `expectedVersion` still matches what is stored.
+   */
+  updateAgentProbe(input: {
+    tenantId: number;
+    agentId: string;
+    expectedVersion: number | null;
+    card: A2AAgentCard;
+    health: "healthy" | "unreachable";
+  }): Promise<GatewayAgentRecord | null>;
 }
 
 export interface RegistrationDeps {
@@ -159,8 +170,37 @@ export interface RegisterAgentResult {
   token: string;
 }
 
+/**
+ * `safeFetch`'s own timer covers only the wait for response headers — once
+ * they arrive it clears the timeout, so a server that sends headers and then
+ * never finishes the body can stall a reader indefinitely. This races the
+ * body read against its own deadline and cancels the stream on timeout so
+ * the caller (and the connection) is freed either way.
+ */
+class ProbeTimeoutError extends Error {}
+
+async function withDeadline<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  onTimeout: () => void,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      onTimeout();
+      reject(new ProbeTimeoutError(`timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, deadline]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
+
 export function createRegistrationService(deps: RegistrationDeps) {
   const mintToken = deps.mintToken ?? newAgentToken;
+  const timeoutMs = deps.timeoutMs ?? 10_000;
 
   async function fetchCard(endpointUrl: string): Promise<A2AAgentCard> {
     const cardUrl = new URL(
@@ -177,7 +217,7 @@ export function createRegistrationService(deps: RegistrationDeps) {
           policy: deps.ssrfPolicy,
           lookup: deps.lookup,
           fetchImpl: deps.fetchImpl,
-          timeoutMs: deps.timeoutMs ?? 10_000,
+          timeoutMs,
         },
       );
     } catch (err) {
@@ -196,12 +236,23 @@ export function createRegistrationService(deps: RegistrationDeps) {
         "unreachable",
       );
     }
+
+    let payload: unknown;
     try {
-      return validateAgentCard(await res.json());
+      payload = await withDeadline(res.json(), timeoutMs, () => {
+        void res.body?.cancel().catch(() => {});
+      });
     } catch (err) {
-      if (err instanceof RegistrationError) throw err;
+      if (err instanceof ProbeTimeoutError) {
+        throw new RegistrationError(
+          `agent card body did not complete within ${timeoutMs}ms`,
+          "unreachable",
+        );
+      }
       throw new RegistrationError("agent card is not valid JSON", "invalid_card");
     }
+
+    return validateAgentCard(payload);
   }
 
   return {
@@ -319,31 +370,29 @@ export function createRegistrationService(deps: RegistrationDeps) {
     async refresh(
       agent: GatewayAgentRecord,
     ): Promise<{ health: "healthy" | "unreachable"; changed: boolean }> {
-      let card: A2AAgentCard;
+      let card = agent.card;
+      let health: "healthy" | "unreachable" = "unreachable";
       try {
         card = await fetchCard(agent.endpointUrl);
+        health = "healthy";
       } catch {
-        await deps.store.registerAgent({
-          tenantId: agent.tenantId,
-          agentId: agent.agentId,
-          displayName: agent.displayName,
-          endpointUrl: agent.endpointUrl,
-          card: agent.card,
-          health: "unreachable",
-        });
-        return { health: "unreachable", changed: false };
+        // Left as `agent.card` / "unreachable" — a probe failure keeps the
+        // last known card rather than blanking it.
       }
 
-      const changed = JSON.stringify(card) !== JSON.stringify(agent.card);
-      await deps.store.registerAgent({
+      // A conditional update, never an insert: an edit or delete that landed
+      // while this probe was in flight wins over the stale snapshot the
+      // sweep started with (docs §5 step 5).
+      await deps.store.updateAgentProbe({
         tenantId: agent.tenantId,
         agentId: agent.agentId,
-        displayName: agent.displayName,
-        endpointUrl: agent.endpointUrl,
+        expectedVersion: agent.probeVersion ?? null,
         card,
-        health: "healthy",
+        health,
       });
-      return { health: "healthy", changed };
+
+      const changed = JSON.stringify(card) !== JSON.stringify(agent.card);
+      return { health, changed };
     },
   };
 }

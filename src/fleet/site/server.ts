@@ -304,12 +304,22 @@ export function startFleetWorkers(opts: {
       store: healthCheck.store,
       refresh: healthCheck.refresh,
     });
+    // Serial per-agent probes mean a slow sweep can outlast its own
+    // interval; without this guard, overlapping sweeps pile up concurrent
+    // requests and writes against the same agents.
+    let sweeping = false;
     runHealthCheckOnce = async () => {
-      const result = await sweepHealth();
-      if (result.unreachable > 0) {
-        opts.logger?.info(result, "fleet gateway health sweep found unreachable agents");
+      if (sweeping) return { checked: 0, unreachable: 0 };
+      sweeping = true;
+      try {
+        const result = await sweepHealth();
+        if (result.unreachable > 0) {
+          opts.logger?.info(result, "fleet gateway health sweep found unreachable agents");
+        }
+        return result;
+      } finally {
+        sweeping = false;
       }
-      return result;
     };
     healthTimer = setInterval(() => {
       if (stopped) return;

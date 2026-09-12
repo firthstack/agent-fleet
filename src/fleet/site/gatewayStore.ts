@@ -27,6 +27,12 @@ export interface GatewayAgentRecord {
   health: AgentHealth;
   cardFetchedAt: string | null;
   lastSeenAt: string | null;
+  /**
+   * Optimistic-concurrency token for the health sweep (docs §5 step 5):
+   * populated whenever the store reads or writes a row, absent on records a
+   * caller constructed by hand (e.g. in tests).
+   */
+  probeVersion?: number;
 }
 
 export interface FleetTaskRecord {
@@ -69,7 +75,7 @@ export interface CreateTaskInput {
 
 const AGENT_COLUMNS = `
   tenant_id, agent_id, display_name, endpoint_url,
-  card_json, health, card_fetched_at, last_seen_at
+  card_json, health, card_fetched_at, last_seen_at, probe_version
 `;
 
 const TASK_COLUMNS = `
@@ -88,6 +94,7 @@ interface AgentRow {
   health: AgentHealth;
   card_fetched_at: Date | null;
   last_seen_at: Date | null;
+  probe_version: string;
 }
 
 interface TaskRow {
@@ -124,6 +131,7 @@ function toAgent(row: AgentRow): GatewayAgentRecord {
     health: row.health,
     cardFetchedAt: iso(row.card_fetched_at),
     lastSeenAt: iso(row.last_seen_at),
+    probeVersion: Number(row.probe_version),
   };
 }
 
@@ -424,7 +432,8 @@ export class GatewayStore {
            card_json       = EXCLUDED.card_json,
            health          = EXCLUDED.health,
            card_fetched_at = now(),
-           updated_at      = now()
+           updated_at      = now(),
+           probe_version   = fleet_agents.probe_version + 1
          RETURNING ${AGENT_COLUMNS}`,
         [
           input.tenantId,
@@ -435,6 +444,68 @@ export class GatewayStore {
           input.health ?? "healthy",
         ],
       );
+
+      await client.query(
+        `DELETE FROM fleet_agent_skills WHERE tenant_id = $1 AND agent_id = $2`,
+        [input.tenantId, input.agentId],
+      );
+      for (const skill of input.card.skills ?? []) {
+        await client.query(
+          `INSERT INTO fleet_agent_skills
+             (tenant_id, agent_id, skill_id, name, description, input_schema)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [
+            input.tenantId,
+            input.agentId,
+            skill.id,
+            skill.name,
+            skill.description,
+            skill.inputSchema === undefined
+              ? null
+              : JSON.stringify(skill.inputSchema),
+          ],
+        );
+      }
+
+      return toAgent(rows[0]);
+    });
+  }
+
+  /**
+   * Health-sweep write path (docs §5 step 5). Unlike `registerAgent`, this
+   * never inserts: a row that vanished between enumeration and this write
+   * stays gone instead of coming back without its cascaded tokens and
+   * credentials. It also only lands if `expectedVersion` still matches the
+   * row's `probe_version` — an edit or delete that happened while the probe
+   * was in flight wins, and the skill index is rebuilt only when the write
+   * actually lands.
+   */
+  async updateAgentProbe(input: {
+    tenantId: number;
+    agentId: string;
+    expectedVersion: number | null;
+    card: A2AAgentCard;
+    health: AgentHealth;
+  }): Promise<GatewayAgentRecord | null> {
+    return this.withTransaction(async (client) => {
+      const { rows } = await client.query<AgentRow>(
+        `UPDATE fleet_agents SET
+           card_json       = $1,
+           health          = $2,
+           card_fetched_at = now(),
+           updated_at      = now(),
+           probe_version   = probe_version + 1
+         WHERE tenant_id = $3 AND agent_id = $4 AND probe_version = $5
+         RETURNING ${AGENT_COLUMNS}`,
+        [
+          JSON.stringify(input.card),
+          input.health,
+          input.tenantId,
+          input.agentId,
+          input.expectedVersion,
+        ],
+      );
+      if (rows.length === 0) return null;
 
       await client.query(
         `DELETE FROM fleet_agent_skills WHERE tenant_id = $1 AND agent_id = $2`,
