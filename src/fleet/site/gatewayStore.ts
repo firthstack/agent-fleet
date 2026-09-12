@@ -181,12 +181,28 @@ export class GatewayStore {
     await this.pool.query(sql);
   }
 
+  /**
+   * Test helper: count rows without a tenant filter. Runs on the pool's owner
+   * role, so it is not subject to RLS — which is the point, since it is used
+   * to assert that nothing was created at all.
+   */
+  async countRows(table: string): Promise<number> {
+    if (!/^[a-z_][a-z0-9_]*$/.test(table)) {
+      throw new Error(`refusing to count a non-identifier table: ${table}`);
+    }
+    const { rows } = await this.pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM ${table}`,
+    );
+    return Number(rows[0].n);
+  }
+
   /** Test helper: wipe every table without dropping the schema. */
   async truncateAll(): Promise<void> {
     await this.pool.query(
-      `TRUNCATE tenants, fleet_users, fleet_agents, fleet_agent_skills,
+      `TRUNCATE tenants, fleet_tenant_members, fleet_agents, fleet_agent_skills,
                 fleet_agent_tokens, fleet_agent_credentials,
-                fleet_tasks, fleet_task_events
+                fleet_tasks, fleet_task_events,
+                auth_user, auth_session, auth_account, auth_verification
        RESTART IDENTITY CASCADE`,
     );
   }
@@ -261,6 +277,99 @@ export class GatewayStore {
        RETURNING id, slug, display_name, created_at`,
       [input.slug, input.displayName],
     );
+    const row = rows[0];
+    return {
+      id: Number(row.id),
+      slug: row.slug,
+      displayName: row.display_name,
+      createdAt: row.created_at.toISOString(),
+    };
+  }
+
+  /**
+   * Find or mint the tenant a user owns.
+   *
+   * Called from Better Auth's user-create hook, so there is never a moment
+   * where someone is signed in with nowhere to put their agents. One user =
+   * one tenant for now; the membership table is already shaped for more.
+   */
+  async ensureTenantForUser(user: {
+    id: string;
+    email: string;
+    name?: string;
+  }): Promise<TenantRecord> {
+    const existing = await this.tenantForUser(user.id);
+    if (existing) return existing;
+
+    return this.withTransaction(async (client) => {
+      const slug = await this.freeSlug(client, user.email);
+      const { rows } = await client.query<{
+        id: string;
+        slug: string;
+        display_name: string;
+        created_at: Date;
+      }>(
+        `INSERT INTO tenants (slug, display_name, created_by)
+         VALUES ($1, $2, $3)
+         RETURNING id, slug, display_name, created_at`,
+        [slug, user.name?.trim() || user.email, user.id],
+      );
+      const row = rows[0];
+      await client.query(
+        `INSERT INTO fleet_tenant_members (tenant_id, user_id, role)
+         VALUES ($1, $2, 'owner')
+         ON CONFLICT DO NOTHING`,
+        [row.id, user.id],
+      );
+      return {
+        id: Number(row.id),
+        slug: row.slug,
+        displayName: row.display_name,
+        createdAt: row.created_at.toISOString(),
+      };
+    });
+  }
+
+  /**
+   * The slug appears in every gateway URL, so it has to be URL-safe and
+   * unique. Derived from the email's local part, with a numeric suffix when
+   * that is taken — two people at different companies are both "admin".
+   */
+  private async freeSlug(client: PoolClient, email: string): Promise<string> {
+    const base =
+      email
+        .split("@")[0]
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 40) || "tenant";
+
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const slug = attempt === 0 ? base : `${base}-${attempt + 1}`;
+      const { rows } = await client.query("SELECT 1 FROM tenants WHERE slug = $1", [
+        slug,
+      ]);
+      if (rows.length === 0) return slug;
+    }
+    return `${base}-${Date.now().toString(36)}`;
+  }
+
+  async tenantForUser(userId: string): Promise<TenantRecord | null> {
+    const { rows } = await this.pool.query<{
+      id: string;
+      slug: string;
+      display_name: string;
+      created_at: Date;
+    }>(
+      `SELECT t.id, t.slug, t.display_name, t.created_at
+       FROM tenants t
+       JOIN fleet_tenant_members m ON m.tenant_id = t.id
+       WHERE m.user_id = $1
+       ORDER BY t.id
+       LIMIT 1`,
+      [userId],
+    );
+    if (rows.length === 0) return null;
     const row = rows[0];
     return {
       id: Number(row.id),

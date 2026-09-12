@@ -14,6 +14,8 @@ import type { AgentCredential } from "./a2aClient.js";
 import { hashToken } from "./registration.js";
 import type { SecretBox } from "./secretBox.js";
 import { RUN_VIEWER_HTML } from "./runViewer.js";
+import { createStaticHandler } from "./staticFiles.js";
+import type { IncomingMessage as NodeRequest, ServerResponse as NodeResponse } from "node:http";
 
 export interface FleetSiteLogger {
   info(data: Record<string, unknown>, message?: string): void;
@@ -32,6 +34,13 @@ export type FleetSiteStore = GatewayStorePort &
 
 export interface FleetSiteOptions {
   store: FleetSiteStore;
+  /**
+   * The console. Handles `/api/*` (session-authenticated) and returns true
+   * when it took the request. Omit it and those paths 404.
+   */
+  console?(req: NodeRequest, res: NodeResponse): Promise<boolean>;
+  /** Directory holding the built SPA. Omit it and only the API is served. */
+  webRoot?: string;
   /** The composition layer. Omit it and the workflow routes answer 404. */
   workflows?: GatewayWorkflowsPort;
   workflowStarter?: GatewayWorkflowStarter;
@@ -93,6 +102,9 @@ function send(res: ServerResponse, response: GatewayResponse): void {
 export function createFleetSiteHandler(opts: FleetSiteOptions) {
   const client = opts.a2aClient ?? createA2AClient();
   const maxBody = opts.maxBodyBytes ?? DEFAULT_MAX_BODY;
+  const serveStatic = opts.webRoot
+    ? createStaticHandler({ root: opts.webRoot })
+    : undefined;
 
   const gateway = createGateway({
     store: opts.store,
@@ -123,12 +135,35 @@ export function createFleetSiteHandler(opts: FleetSiteOptions) {
         return;
       }
 
-      // The run viewer. It holds no credentials itself — the page asks for an
-      // agent token and calls the same JSON API an agent would.
-      if (method === "GET" && (url.pathname === "/" || url.pathname === "/runs")) {
+      // The console owns /api/* entirely — a different authentication scheme
+      // and a different threat model from the machine surface below.
+      if (opts.console && url.pathname.startsWith("/api/")) {
+        if (await opts.console(req, res)) return;
+      }
+
+      // The standalone run viewer, kept only for a deployment with no built
+      // SPA. Once the console is serving, /app/runs is the real one and this
+      // page's "paste an agent token" compromise goes away.
+      if (
+        !serveStatic &&
+        method === "GET" &&
+        (url.pathname === "/" || url.pathname === "/runs")
+      ) {
         res.statusCode = 200;
         res.setHeader("content-type", "text/html; charset=utf-8");
         res.end(RUN_VIEWER_HTML);
+        return;
+      }
+
+      // Static last among the GET surfaces: /a2a and /api claim their prefixes
+      // above, and anything else that is not a real file falls back to the
+      // SPA shell so a client-side route survives a reload.
+      if (
+        serveStatic &&
+        !url.pathname.startsWith("/a2a/") &&
+        !url.pathname.startsWith("/api/") &&
+        (await serveStatic(req, res, url.pathname))
+      ) {
         return;
       }
 

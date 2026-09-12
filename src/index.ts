@@ -15,6 +15,8 @@ import {
 } from "./fleet/site/server.js";
 import { createWorkflowDriver } from "./fleet/workflow/driver.js";
 import { createWorkflowDispatcher } from "./fleet/workflow/dispatcher.js";
+import { createAuth } from "./auth.js";
+import { createConsoleHandler } from "./fleet/console/api.js";
 
 dotenv.config();
 
@@ -46,12 +48,33 @@ async function main(): Promise<void> {
     }),
   });
 
+  // Human identity, entirely separate from the agent tokens on /a2a/*.
+  // The tenant is minted inside the user-create hook, so nobody is ever
+  // signed in with nowhere to put their agents.
+  const auth = createAuth({
+    connectionString: fleetDatabaseUrlFromEnv(),
+    baseURL: publicBaseUrl,
+    onUserCreated: async (user) => {
+      const tenant = await store.ensureTenantForUser(user);
+      log.info({ userId: user.id, tenant: tenant.slug }, "tenant created for new user");
+    },
+  });
+
   const server = createFleetSiteServer({
     store,
     publicBaseUrl,
     logger: log,
     workflows,
     workflowStarter: driver,
+    // Built by `vite build`; absent in a dev run, which just means the API
+    // is served without the console.
+    webRoot: process.env.FLEET_WEB_ROOT?.trim() || "dist/web",
+    console: createConsoleHandler({
+      auth,
+      store,
+      origin: publicBaseUrl,
+      logger: log,
+    }),
   });
   const workers = startFleetWorkers({ store, workflowDriver: driver, logger: log });
 
