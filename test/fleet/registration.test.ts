@@ -1,7 +1,10 @@
 import { randomBytes } from "node:crypto";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
 import {
   assertValidAgentId,
+  createHealthSweeper,
   createRegistrationService,
   hashToken,
   newAgentToken,
@@ -30,6 +33,11 @@ function validCard(): A2AAgentCard {
 
 function fakeStore(seed: GatewayAgentRecord[] = []) {
   const agents = [...seed];
+  // Separate counters, matching real Postgres semantics: `id` is a serial
+  // primary key, never reused once assigned; `probe_version` starts at 1 on
+  // every fresh INSERT and only increments from there for that same row.
+  let rowIdSeq = Math.max(0, ...seed.map((a) => a.rowId ?? 0));
+  const nextRowId = () => ++rowIdSeq;
   const tokens: Array<{
     tenantId: number;
     agentId: string;
@@ -43,6 +51,10 @@ function fakeStore(seed: GatewayAgentRecord[] = []) {
       return agents.find((a) => a.tenantId === tenantId && a.agentId === agentId) ?? null;
     },
     async registerAgent(input) {
+      const i = agents.findIndex(
+        (a) => a.tenantId === input.tenantId && a.agentId === input.agentId,
+      );
+      const existing = i >= 0 ? agents[i] : null;
       const record: GatewayAgentRecord = {
         tenantId: input.tenantId,
         agentId: input.agentId,
@@ -52,13 +64,35 @@ function fakeStore(seed: GatewayAgentRecord[] = []) {
         health: input.health ?? "healthy",
         cardFetchedAt: "2026-09-11T00:00:00.000Z",
         lastSeenAt: null,
+        // A true insert starts a fresh row at version 1; an ON CONFLICT
+        // update keeps the row's id and bumps its version.
+        rowId: existing?.rowId ?? nextRowId(),
+        probeVersion: existing ? (existing.probeVersion ?? 0) + 1 : 1,
       };
-      const i = agents.findIndex(
-        (a) => a.tenantId === input.tenantId && a.agentId === input.agentId,
-      );
       if (i >= 0) agents[i] = record;
       else agents.push(record);
       return record;
+    },
+    async updateAgentProbe(input) {
+      const i = agents.findIndex(
+        (a) => a.tenantId === input.tenantId && a.agentId === input.agentId,
+      );
+      // Never inserts: a row gone by the time the write lands stays gone.
+      if (i < 0) return null;
+      // A conditional update: an edit or delete since enumeration wins. Both
+      // the version and the row id must still match — a delete-and-reinsert
+      // can produce a new row whose version coincides with the old one.
+      if ((agents[i].probeVersion ?? null) !== input.expectedVersion) return null;
+      if ((agents[i].rowId ?? null) !== input.expectedRowId) return null;
+      const updated: GatewayAgentRecord = {
+        ...agents[i],
+        card: input.card,
+        health: input.health,
+        cardFetchedAt: "2026-09-11T00:00:00.000Z",
+        probeVersion: (agents[i].probeVersion ?? 0) + 1,
+      };
+      agents[i] = updated;
+      return updated;
     },
     async issueAgentToken(tenantId, agentId, hash) {
       tokens.push({ tenantId, agentId, hash });
@@ -309,6 +343,218 @@ describe("registration refresh", () => {
 
     expect(await svc.refresh(agent)).toEqual({ health: "healthy", changed: true });
     expect(f.agents[0].card.skills[0].id).toBe("review.pr2");
+  });
+
+  it("does not resurrect an agent deleted while its probe was in flight", async () => {
+    const seeded: GatewayAgentRecord = { ...agent, probeVersion: 1 };
+    const f = fakeStore([seeded]);
+    // The sweep enumerated `seeded` before this delete happened; its probe
+    // is still holding that stale snapshot when the delete lands.
+    f.agents.length = 0;
+
+    const svc = createRegistrationService({
+      store: f.store,
+      lookup: publicLookup,
+      fetchImpl: cardResponder(validCard()),
+    });
+
+    const result = await svc.refresh(seeded);
+    expect(result.health).toBe("healthy");
+    // Must never come back via an insert — the row, and everything that
+    // cascaded from it (tokens, credentials), stays deleted.
+    expect(f.agents).toHaveLength(0);
+  });
+
+  it("does not overwrite a re-created agent whose fresh row reused the same probe version", async () => {
+    const seeded: GatewayAgentRecord = { ...agent, rowId: 1, probeVersion: 1 };
+    const f = fakeStore([seeded]);
+    // The sweep enumerated `seeded` (rowId 1, version 1). Before its probe's
+    // write lands, the tenant deletes the agent and registers it again at a
+    // new endpoint — a brand new row, which also starts at version 1.
+    f.agents.length = 0;
+    await f.store.registerAgent({
+      tenantId: seeded.tenantId,
+      agentId: seeded.agentId,
+      displayName: "Replacement",
+      endpointUrl: "https://replacement.acme.example/",
+      card: validCard(),
+    });
+    const replacement = { ...f.agents[0] };
+    expect(replacement.probeVersion).toBe(1); // same version as `seeded`
+    expect(replacement.rowId).not.toBe(seeded.rowId); // but a different row
+
+    const svc = createRegistrationService({
+      store: f.store,
+      lookup: publicLookup,
+      fetchImpl: cardResponder(validCard()),
+    });
+
+    // The stale probe, still carrying `seeded`'s old rowId, lands now.
+    await svc.refresh(seeded);
+
+    // Version alone would have matched and clobbered the replacement's card
+    // and endpoint with the old probe's results; the row id must catch it.
+    expect(f.agents[0]).toEqual(replacement);
+  });
+
+  it("does not undo an edit made while its probe was in flight", async () => {
+    const seeded: GatewayAgentRecord = { ...agent, probeVersion: 1 };
+    const f = fakeStore([seeded]);
+    // A tenant edits the agent after enumeration captured `seeded` but
+    // before the outstanding probe's write lands.
+    const edited: GatewayAgentRecord = {
+      ...seeded,
+      displayName: "Renamed By Tenant",
+      endpointUrl: "https://moved.acme.example/",
+      probeVersion: 2,
+    };
+    f.agents[0] = edited;
+
+    const svc = createRegistrationService({
+      store: f.store,
+      lookup: publicLookup,
+      fetchImpl: cardResponder(validCard()),
+    });
+
+    await svc.refresh(seeded);
+    // The edit survives untouched — the stale probe must not restore the
+    // old displayName/endpointUrl or bump past the edit's version.
+    expect(f.agents[0]).toEqual(edited);
+  });
+
+  it("does not hang when headers arrive but the response body never completes", async () => {
+    const f = fakeStore([agent]);
+    const svc = createRegistrationService({
+      store: f.store,
+      lookup: publicLookup,
+      timeoutMs: 20,
+      fetchImpl: (async () => ({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        // Headers "arrived"; the body never finishes.
+        json: () => new Promise(() => {}),
+        body: { cancel: async () => {} },
+      })) as unknown as typeof fetch,
+    });
+
+    const result = await svc.refresh(agent);
+    expect(result).toEqual({ health: "unreachable", changed: false });
+  });
+
+  it("aborts the real connection when the body stalls after headers, instead of failing to cancel a locked stream", async () => {
+    // A fake `body.cancel()` (as above) always resolves, so it can't catch a
+    // regression where the real cancel path throws because `res.json()`
+    // already holds the stream's reader lock. This needs a real server, a
+    // real `Response`, and undici's real `fetch` to be a meaningful check.
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.write("{"); // headers sent; body deliberately never completes
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+
+    try {
+      const f = fakeStore([agent]);
+      const svc = createRegistrationService({
+        store: f.store,
+        ssrfPolicy: { allowInsecure: true },
+        lookup: async () => [{ address: "127.0.0.1", family: 4 }],
+        timeoutMs: 50,
+      });
+
+      const result = await svc.refresh({
+        ...agent,
+        endpointUrl: `http://127.0.0.1:${port}/`,
+      });
+      expect(result).toEqual({ health: "unreachable", changed: false });
+
+      // The fix must tear down the stalled connection, not just give up on
+      // reading it — otherwise probes of a server that keeps streaming
+      // accumulate open connections across sweeps.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const openConnections = await new Promise<number>((resolve, reject) => {
+        server.getConnections((err, count) => (err ? reject(err) : resolve(count)));
+      });
+      expect(openConnections).toBe(0);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});
+
+describe("createHealthSweeper", () => {
+  const healthy: GatewayAgentRecord = {
+    tenantId: 1,
+    agentId: "dev-agent",
+    displayName: "dev-agent",
+    endpointUrl: "https://dev.acme.example/",
+    card: validCard(),
+    health: "healthy",
+    cardFetchedAt: null,
+    lastSeenAt: null,
+  };
+  const other: GatewayAgentRecord = {
+    tenantId: 2,
+    agentId: "review-agent",
+    displayName: "review-agent",
+    endpointUrl: "https://review.globex.example/",
+    card: validCard(),
+    health: "healthy",
+    cardFetchedAt: null,
+    lastSeenAt: null,
+  };
+
+  it("refreshes every agent across every tenant, not just one", async () => {
+    const refreshed: GatewayAgentRecord[] = [];
+    const sweep = createHealthSweeper({
+      store: { async listAllAgentsUnscoped() { return [healthy, other]; } },
+      async refresh(agent) {
+        refreshed.push(agent);
+        return { health: "healthy", changed: false };
+      },
+    });
+
+    expect(await sweep()).toEqual({ checked: 2, unreachable: 0 });
+    expect(refreshed.map((a) => a.agentId)).toEqual(["dev-agent", "review-agent"]);
+  });
+
+  it("counts agents that go unreachable, so a stopped agent stops reading healthy forever", async () => {
+    const sweep = createHealthSweeper({
+      store: { async listAllAgentsUnscoped() { return [healthy, other]; } },
+      async refresh(agent) {
+        return agent.agentId === "dev-agent"
+          ? { health: "unreachable", changed: false }
+          : { health: "healthy", changed: false };
+      },
+    });
+
+    expect(await sweep()).toEqual({ checked: 2, unreachable: 1 });
+  });
+
+  it("isolates a probe failure so a rejected refresh doesn't abort the sweep for another tenant's agent", async () => {
+    const refreshed: string[] = [];
+    const errors: Array<{ agentId: string; error: unknown }> = [];
+    const sweep = createHealthSweeper({
+      store: { async listAllAgentsUnscoped() { return [healthy, other]; } },
+      async refresh(agent) {
+        refreshed.push(agent.agentId);
+        if (agent.agentId === "dev-agent") {
+          // Simulates PostgreSQL JSONB rejecting a card containing an
+          // escaped null character, which `validateAgentCard` lets through.
+          throw new Error('invalid input syntax for type json: unsupported Unicode escape sequence');
+        }
+        return { health: "healthy", changed: false };
+      },
+      onError(agent, error) {
+        errors.push({ agentId: agent.agentId, error });
+      },
+    });
+
+    expect(await sweep()).toEqual({ checked: 2, unreachable: 0 });
+    expect(refreshed).toEqual(["dev-agent", "review-agent"]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].agentId).toBe("dev-agent");
   });
 });
 

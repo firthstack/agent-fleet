@@ -86,6 +86,11 @@ function fixture() {
       else agents.push(record);
       return record;
     },
+    async updateAgentProbe() {
+      // Not exercised here — this suite covers register/update/rotate, not
+      // the health sweep.
+      return null;
+    },
     async issueAgentToken(tenantId, agentId, hash) {
       tokens.push({ tenantId, agentId, hash });
     },

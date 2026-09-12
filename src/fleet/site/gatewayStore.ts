@@ -27,6 +27,21 @@ export interface GatewayAgentRecord {
   health: AgentHealth;
   cardFetchedAt: string | null;
   lastSeenAt: string | null;
+  /**
+   * Optimistic-concurrency token for the health sweep (docs §5 step 5):
+   * populated whenever the store reads or writes a row, absent on records a
+   * caller constructed by hand (e.g. in tests).
+   *
+   * `probe_version` alone is not enough to guard a stale probe's write: it
+   * resets to 1 on every INSERT, so a delete-and-re-register that lands
+   * while a probe is in flight can produce a new row with the same version
+   * the sweep captured on the old one. `rowId` is the table's own primary
+   * key — never reused across a delete and a fresh insert — so pairing it
+   * with `probeVersion` in the write's WHERE clause tells the two rows apart
+   * even when their versions collide.
+   */
+  probeVersion?: number;
+  rowId?: number;
 }
 
 export interface FleetTaskRecord {
@@ -68,8 +83,8 @@ export interface CreateTaskInput {
 }
 
 const AGENT_COLUMNS = `
-  tenant_id, agent_id, display_name, endpoint_url,
-  card_json, health, card_fetched_at, last_seen_at
+  id, tenant_id, agent_id, display_name, endpoint_url,
+  card_json, health, card_fetched_at, last_seen_at, probe_version
 `;
 
 const TASK_COLUMNS = `
@@ -80,6 +95,7 @@ const TASK_COLUMNS = `
 `;
 
 interface AgentRow {
+  id: string;
   tenant_id: string;
   agent_id: string;
   display_name: string;
@@ -88,6 +104,7 @@ interface AgentRow {
   health: AgentHealth;
   card_fetched_at: Date | null;
   last_seen_at: Date | null;
+  probe_version: string;
 }
 
 interface TaskRow {
@@ -124,6 +141,8 @@ function toAgent(row: AgentRow): GatewayAgentRecord {
     health: row.health,
     cardFetchedAt: iso(row.card_fetched_at),
     lastSeenAt: iso(row.last_seen_at),
+    probeVersion: Number(row.probe_version),
+    rowId: Number(row.id),
   };
 }
 
@@ -424,7 +443,8 @@ export class GatewayStore {
            card_json       = EXCLUDED.card_json,
            health          = EXCLUDED.health,
            card_fetched_at = now(),
-           updated_at      = now()
+           updated_at      = now(),
+           probe_version   = fleet_agents.probe_version + 1
          RETURNING ${AGENT_COLUMNS}`,
         [
           input.tenantId,
@@ -456,6 +476,89 @@ export class GatewayStore {
               : JSON.stringify(skill.inputSchema),
           ],
         );
+      }
+
+      return toAgent(rows[0]);
+    });
+  }
+
+  /**
+   * Health-sweep write path (docs §5 step 5). Unlike `registerAgent`, this
+   * never inserts: a row that vanished between enumeration and this write
+   * stays gone instead of coming back without its cascaded tokens and
+   * credentials.
+   *
+   * The write only lands if both `expectedVersion` matches `probe_version`
+   * *and* `expectedRowId` matches the row's own primary key. Version alone
+   * is not enough: a delete followed by a re-register lands a brand new row
+   * starting back at `probe_version = 1`, so a probe still in flight from
+   * before the delete can carry the same version number as the replacement.
+   * The primary key is never reused across that delete-and-insert, so
+   * pairing it with the version tells the two rows apart.
+   *
+   * The skill index is rebuilt only when the card actually changed — an
+   * unreachable probe (or a reachable one reporting the same card) writes
+   * health without touching `fleet_agent_skills` at all, so a fleet-wide
+   * sweep doesn't re-churn every agent's skill rows on every pass.
+   */
+  async updateAgentProbe(input: {
+    tenantId: number;
+    agentId: string;
+    expectedVersion: number | null;
+    expectedRowId: number | null;
+    card: A2AAgentCard;
+    health: AgentHealth;
+  }): Promise<GatewayAgentRecord | null> {
+    return this.withTransaction(async (client) => {
+      const { rows } = await client.query<AgentRow & { card_changed: boolean }>(
+        `WITH previous AS (
+           SELECT card_json FROM fleet_agents
+           WHERE tenant_id = $3 AND agent_id = $4 AND probe_version = $5 AND id = $6
+         ), updated AS (
+           UPDATE fleet_agents SET
+             card_json       = $1,
+             health          = $2,
+             card_fetched_at = now(),
+             updated_at      = now(),
+             probe_version   = probe_version + 1
+           WHERE tenant_id = $3 AND agent_id = $4 AND probe_version = $5 AND id = $6
+           RETURNING ${AGENT_COLUMNS}
+         )
+         SELECT updated.*, (previous.card_json IS DISTINCT FROM $1::jsonb) AS card_changed
+         FROM updated, previous`,
+        [
+          JSON.stringify(input.card),
+          input.health,
+          input.tenantId,
+          input.agentId,
+          input.expectedVersion,
+          input.expectedRowId,
+        ],
+      );
+      if (rows.length === 0) return null;
+
+      if (rows[0].card_changed) {
+        await client.query(
+          `DELETE FROM fleet_agent_skills WHERE tenant_id = $1 AND agent_id = $2`,
+          [input.tenantId, input.agentId],
+        );
+        for (const skill of input.card.skills ?? []) {
+          await client.query(
+            `INSERT INTO fleet_agent_skills
+               (tenant_id, agent_id, skill_id, name, description, input_schema)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [
+              input.tenantId,
+              input.agentId,
+              skill.id,
+              skill.name,
+              skill.description,
+              skill.inputSchema === undefined
+                ? null
+                : JSON.stringify(skill.inputSchema),
+            ],
+          );
+        }
       }
 
       return toAgent(rows[0]);
@@ -906,6 +1009,18 @@ export class GatewayStore {
       "SELECT agent_id FROM fleet_agents",
     );
     return rows.map((r) => r.agent_id);
+  }
+
+  /**
+   * Same bypass as above, but full records — what the health-check sweep
+   * (docs §5 step 5) needs to re-fetch each agent's card and write back its
+   * health, across every tenant, from a single background loop.
+   */
+  async listAllAgentsUnscoped(): Promise<GatewayAgentRecord[]> {
+    const { rows } = await this.pool.query<AgentRow>(
+      `SELECT ${AGENT_COLUMNS} FROM fleet_agents`,
+    );
+    return rows.map(toAgent);
   }
 
   /** The composition layer's store, sharing this pool and tenant context. */

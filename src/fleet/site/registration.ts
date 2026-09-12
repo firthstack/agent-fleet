@@ -133,6 +133,21 @@ export interface RegistrationStorePort {
     agentId: string,
     newTokenHash: string,
   ): Promise<{ revoked: number }>;
+  /**
+   * Conditional write used by the health sweep: never inserts, and only
+   * lands if both `expectedVersion` and `expectedRowId` still match what is
+   * stored — the row id catches a delete-and-re-register that landed a
+   * fresh row whose version happens to coincide with the one this probe
+   * captured (docs §5 step 5).
+   */
+  updateAgentProbe(input: {
+    tenantId: number;
+    agentId: string;
+    expectedVersion: number | null;
+    expectedRowId: number | null;
+    card: A2AAgentCard;
+    health: "healthy" | "unreachable";
+  }): Promise<GatewayAgentRecord | null>;
 }
 
 export interface RegistrationDeps {
@@ -159,8 +174,45 @@ export interface RegisterAgentResult {
   token: string;
 }
 
+/**
+ * `safeFetch`'s own timer covers only the wait for response headers — once
+ * they arrive it clears the timeout, so a server that sends headers and then
+ * never finishes the body can stall a reader indefinitely. This races the
+ * body read against its own deadline. The timeout aborts the fetch's own
+ * `AbortController` rather than calling `body.cancel()`: by the time the
+ * deadline fires, `res.json()` already holds the stream's reader lock, and
+ * `cancel()` on a locked stream rejects with "ReadableStream is locked" —
+ * silently, if that rejection isn't handled — leaving the connection and the
+ * in-flight read running. Aborting works regardless of who holds the lock.
+ */
+class ProbeTimeoutError extends Error {}
+
+async function withDeadline<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  onTimeout: () => void,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      onTimeout();
+      reject(new ProbeTimeoutError(`timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, deadline]);
+  } finally {
+    clearTimeout(timer!);
+    // Once `deadline` wins the race, `promise` is still pending and nothing
+    // else awaits it; aborting unblocks it, but its eventual rejection would
+    // otherwise surface as an unhandled rejection.
+    promise.catch(() => {});
+  }
+}
+
 export function createRegistrationService(deps: RegistrationDeps) {
   const mintToken = deps.mintToken ?? newAgentToken;
+  const timeoutMs = deps.timeoutMs ?? 10_000;
 
   async function fetchCard(endpointUrl: string): Promise<A2AAgentCard> {
     const cardUrl = new URL(
@@ -168,6 +220,11 @@ export function createRegistrationService(deps: RegistrationDeps) {
       endpointUrl,
     ).toString();
 
+    // Owned here (not just inside `safeFetch`) so the body-read deadline
+    // below can abort the same underlying request: `safeFetch` clears its
+    // own timer once headers arrive, but this controller stays live for as
+    // long as the caller holds onto it.
+    const controller = new AbortController();
     let res: Response;
     try {
       res = await safeFetch(
@@ -177,7 +234,8 @@ export function createRegistrationService(deps: RegistrationDeps) {
           policy: deps.ssrfPolicy,
           lookup: deps.lookup,
           fetchImpl: deps.fetchImpl,
-          timeoutMs: deps.timeoutMs ?? 10_000,
+          timeoutMs,
+          controller,
         },
       );
     } catch (err) {
@@ -196,12 +254,23 @@ export function createRegistrationService(deps: RegistrationDeps) {
         "unreachable",
       );
     }
+
+    let payload: unknown;
     try {
-      return validateAgentCard(await res.json());
+      payload = await withDeadline(res.json(), timeoutMs, () => {
+        controller.abort();
+      });
     } catch (err) {
-      if (err instanceof RegistrationError) throw err;
+      if (err instanceof ProbeTimeoutError) {
+        throw new RegistrationError(
+          `agent card body did not complete within ${timeoutMs}ms`,
+          "unreachable",
+        );
+      }
       throw new RegistrationError("agent card is not valid JSON", "invalid_card");
     }
+
+    return validateAgentCard(payload);
   }
 
   return {
@@ -319,31 +388,67 @@ export function createRegistrationService(deps: RegistrationDeps) {
     async refresh(
       agent: GatewayAgentRecord,
     ): Promise<{ health: "healthy" | "unreachable"; changed: boolean }> {
-      let card: A2AAgentCard;
+      let card = agent.card;
+      let health: "healthy" | "unreachable" = "unreachable";
       try {
         card = await fetchCard(agent.endpointUrl);
+        health = "healthy";
       } catch {
-        await deps.store.registerAgent({
-          tenantId: agent.tenantId,
-          agentId: agent.agentId,
-          displayName: agent.displayName,
-          endpointUrl: agent.endpointUrl,
-          card: agent.card,
-          health: "unreachable",
-        });
-        return { health: "unreachable", changed: false };
+        // Left as `agent.card` / "unreachable" — a probe failure keeps the
+        // last known card rather than blanking it.
       }
 
-      const changed = JSON.stringify(card) !== JSON.stringify(agent.card);
-      await deps.store.registerAgent({
+      // A conditional update, never an insert: an edit or delete that landed
+      // while this probe was in flight wins over the stale snapshot the
+      // sweep started with (docs §5 step 5).
+      await deps.store.updateAgentProbe({
         tenantId: agent.tenantId,
         agentId: agent.agentId,
-        displayName: agent.displayName,
-        endpointUrl: agent.endpointUrl,
+        expectedVersion: agent.probeVersion ?? null,
+        expectedRowId: agent.rowId ?? null,
         card,
-        health: "healthy",
+        health,
       });
-      return { health: "healthy", changed };
+
+      const changed = JSON.stringify(card) !== JSON.stringify(agent.card);
+      return { health, changed };
     },
+  };
+}
+
+export interface HealthSweepStorePort {
+  listAllAgentsUnscoped(): Promise<GatewayAgentRecord[]>;
+}
+
+/**
+ * The background half of registration step 5 (docs §5): drives `refresh()`
+ * over every agent in every tenant. Without a caller for this, health is
+ * written once at registration and never again — an agent that goes down
+ * keeps reading "healthy" on the dashboard forever.
+ */
+export function createHealthSweeper(deps: {
+  store: HealthSweepStorePort;
+  refresh(
+    agent: GatewayAgentRecord,
+  ): Promise<{ health: "healthy" | "unreachable"; changed: boolean }>;
+  /**
+   * Called when a single agent's probe throws (e.g. the store rejects the
+   * write). Without this, one bad agent's failure would otherwise propagate
+   * out of the loop below and abort the sweep for every remaining tenant.
+   */
+  onError?(agent: GatewayAgentRecord, error: unknown): void;
+}) {
+  return async function runOnce(): Promise<{ checked: number; unreachable: number }> {
+    const agents = await deps.store.listAllAgentsUnscoped();
+    let unreachable = 0;
+    for (const agent of agents) {
+      try {
+        const result = await deps.refresh(agent);
+        if (result.health === "unreachable") unreachable += 1;
+      } catch (err) {
+        deps.onError?.(agent, err);
+      }
+    }
+    return { checked: agents.length, unreachable };
   };
 }

@@ -176,6 +176,195 @@ describe("GatewayStore tenancy", () => {
   });
 });
 
+describe("GatewayStore.updateAgentProbe", () => {
+  it("writes health and card when the expected version still matches", async () => {
+    const acme = await store.ensureTenant({ slug: "acme", displayName: "Acme" });
+    await store.registerAgent({
+      tenantId: acme.id,
+      agentId: "dev-agent",
+      displayName: "dev",
+      endpointUrl: "https://dev.acme.example/",
+      card: card(),
+    });
+    const probed = await store.getAgent(acme.id, "dev-agent");
+
+    const nextCard = card({
+      skills: [{ id: "develop.revise", name: "Revise", description: "Revise a PR." }],
+    });
+    const updated = await store.updateAgentProbe({
+      tenantId: acme.id,
+      agentId: "dev-agent",
+      expectedVersion: probed!.probeVersion!,
+      expectedRowId: probed!.rowId!,
+      card: nextCard,
+      health: "healthy",
+    });
+
+    expect(updated?.card.skills[0].id).toBe("develop.revise");
+    expect(await store.findAgentsBySkill(acme.id, "develop.issue")).toEqual([]);
+    expect((await store.findAgentsBySkill(acme.id, "develop.revise")).length).toBe(1);
+  });
+
+  it("refuses to write when the row changed since the version was captured", async () => {
+    const acme = await store.ensureTenant({ slug: "acme", displayName: "Acme" });
+    await store.registerAgent({
+      tenantId: acme.id,
+      agentId: "dev-agent",
+      displayName: "dev",
+      endpointUrl: "https://dev.acme.example/",
+      card: card(),
+    });
+    const stale = await store.getAgent(acme.id, "dev-agent");
+
+    // A concurrent edit lands after the version above was captured.
+    await store.registerAgent({
+      tenantId: acme.id,
+      agentId: "dev-agent",
+      displayName: "renamed by tenant",
+      endpointUrl: "https://dev.acme.example/",
+      card: card(),
+    });
+
+    const result = await store.updateAgentProbe({
+      tenantId: acme.id,
+      agentId: "dev-agent",
+      expectedVersion: stale!.probeVersion!,
+      expectedRowId: stale!.rowId!,
+      card: card({ skills: [{ id: "develop.stale", name: "n", description: "d" }] }),
+      health: "unreachable",
+    });
+
+    expect(result).toBeNull();
+    // The edit survives untouched — the stale probe must not clobber it.
+    expect((await store.getAgent(acme.id, "dev-agent"))?.displayName).toBe(
+      "renamed by tenant",
+    );
+    expect(await store.findAgentsBySkill(acme.id, "develop.stale")).toEqual([]);
+  });
+
+  it("never inserts a row for an agent deleted before the write lands", async () => {
+    const acme = await store.ensureTenant({ slug: "acme", displayName: "Acme" });
+    await store.registerAgent({
+      tenantId: acme.id,
+      agentId: "dev-agent",
+      displayName: "dev",
+      endpointUrl: "https://dev.acme.example/",
+      card: card(),
+    });
+    const stale = await store.getAgent(acme.id, "dev-agent");
+    await store.deleteAgent(acme.id, "dev-agent");
+
+    const result = await store.updateAgentProbe({
+      tenantId: acme.id,
+      agentId: "dev-agent",
+      expectedVersion: stale!.probeVersion!,
+      expectedRowId: stale!.rowId!,
+      card: card(),
+      health: "healthy",
+    });
+
+    expect(result).toBeNull();
+    expect(await store.getAgent(acme.id, "dev-agent")).toBeNull();
+  });
+
+  it("does not let a stale probe overwrite a re-created agent that reused the same probe version", async () => {
+    const acme = await store.ensureTenant({ slug: "acme", displayName: "Acme" });
+    await store.registerAgent({
+      tenantId: acme.id,
+      agentId: "dev-agent",
+      displayName: "original",
+      endpointUrl: "https://original.acme.example/",
+      card: card(),
+    });
+    const stale = await store.getAgent(acme.id, "dev-agent");
+    expect(stale!.probeVersion).toBe(1);
+
+    // The tenant deletes the agent and registers a replacement at a new
+    // endpoint before the outstanding probe (still holding `stale`) writes
+    // back. The replacement is a brand-new row, so it also starts at
+    // probe_version 1 — matching `stale` on version alone.
+    await store.deleteAgent(acme.id, "dev-agent");
+    await store.registerAgent({
+      tenantId: acme.id,
+      agentId: "dev-agent",
+      displayName: "replacement",
+      endpointUrl: "https://replacement.acme.example/",
+      card: card(),
+    });
+    const replacement = await store.getAgent(acme.id, "dev-agent");
+    expect(replacement!.probeVersion).toBe(stale!.probeVersion);
+    expect(replacement!.rowId).not.toBe(stale!.rowId);
+
+    const result = await store.updateAgentProbe({
+      tenantId: acme.id,
+      agentId: "dev-agent",
+      expectedVersion: stale!.probeVersion!,
+      expectedRowId: stale!.rowId!,
+      card: card({ skills: [{ id: "develop.stale", name: "n", description: "d" }] }),
+      health: "unreachable",
+    });
+
+    expect(result).toBeNull();
+    // The replacement survives untouched — the stale probe, matching only
+    // on version, must not overwrite it with the old endpoint's results.
+    const current = await store.getAgent(acme.id, "dev-agent");
+    expect(current?.displayName).toBe("replacement");
+    expect(current?.endpointUrl).toBe("https://replacement.acme.example/");
+    expect(await store.findAgentsBySkill(acme.id, "develop.stale")).toEqual([]);
+  });
+
+  it("does not rewrite the skill index when the probe's card is unchanged", async () => {
+    const acme = await store.ensureTenant({ slug: "acme", displayName: "Acme" });
+    await store.registerAgent({
+      tenantId: acme.id,
+      agentId: "dev-agent",
+      displayName: "dev",
+      endpointUrl: "https://dev.acme.example/",
+      card: card(),
+    });
+    const v1 = await store.getAgent(acme.id, "dev-agent");
+
+    const ctidsOf = async () =>
+      store.withTenant(acme.id, (client) =>
+        client
+          .query<{ ctid: string }>(
+            "SELECT ctid::text FROM fleet_agent_skills WHERE tenant_id = $1 AND agent_id = $2 ORDER BY skill_id",
+            [acme.id, "dev-agent"],
+          )
+          .then((r) => r.rows.map((row) => row.ctid)),
+      );
+    const beforeUnchanged = await ctidsOf();
+
+    // Same card content — only health flips. The skill rows must not be
+    // deleted and reinserted just because a probe wrote back.
+    await store.updateAgentProbe({
+      tenantId: acme.id,
+      agentId: "dev-agent",
+      expectedVersion: v1!.probeVersion!,
+      expectedRowId: v1!.rowId!,
+      card: card(),
+      health: "unreachable",
+    });
+    expect(await ctidsOf()).toEqual(beforeUnchanged);
+
+    const v2 = await store.getAgent(acme.id, "dev-agent");
+    const nextCard = card({
+      skills: [{ id: "develop.revise", name: "Revise", description: "Revise a PR." }],
+    });
+    await store.updateAgentProbe({
+      tenantId: acme.id,
+      agentId: "dev-agent",
+      expectedVersion: v2!.probeVersion!,
+      expectedRowId: v2!.rowId!,
+      card: nextCard,
+      health: "healthy",
+    });
+    // A genuinely changed card still rebuilds the index.
+    expect(await store.findAgentsBySkill(acme.id, "develop.issue")).toEqual([]);
+    expect((await store.findAgentsBySkill(acme.id, "develop.revise")).length).toBe(1);
+  });
+});
+
 describe("GatewayStore agent tokens", () => {
   it("resolves a token to exactly one (tenant, agent) pair", async () => {
     const acme = await store.ensureTenant({ slug: "acme", displayName: "Acme" });
@@ -378,5 +567,28 @@ describe("row level security", () => {
     // The notifier and sweeper scan every tenant by design (docs §8), so the
     // owner role deliberately keeps its bypass.
     expect((await store.listAllAgentIdsUnscoped()).sort()).toEqual(["a", "b"]);
+  });
+
+  it("returns full agent records across tenants for the health-check sweep", async () => {
+    const acme = await store.ensureTenant({ slug: "acme", displayName: "Acme" });
+    const globex = await store.ensureTenant({ slug: "globex", displayName: "Globex" });
+    for (const [tenantId, agentId] of [
+      [acme.id, "a"],
+      [globex.id, "b"],
+    ] as const) {
+      await store.registerAgent({
+        tenantId,
+        agentId,
+        displayName: agentId,
+        endpointUrl: `https://${agentId}.example/`,
+        card: card(),
+      });
+    }
+
+    const all = await store.listAllAgentsUnscoped();
+    expect(all.map((a) => a.agentId).sort()).toEqual(["a", "b"]);
+    const acmeAgent = all.find((a) => a.agentId === "a");
+    expect(acmeAgent?.tenantId).toBe(acme.id);
+    expect(acmeAgent?.endpointUrl).toBe("https://a.example/");
   });
 });
