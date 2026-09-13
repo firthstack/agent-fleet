@@ -45,23 +45,39 @@ const TRACE = [
   { state: "completed", note: "merge requested", gap: "+11s", slow: false },
 ];
 
+/** The sky is drawn from the same alphabet as the planet — round dots beside
+ *  a character globe read as two different pictures. */
+const STAR_GLYPHS = [".", "·", "·", "+", "*"];
+
 /** Deterministic star field: the same sky on every load, and no work at
  *  render time beyond laying the spans out. */
 function stars(seed: number, count: number) {
-  const out: Array<{ left: number; top: number; size: number; opacity: number; delay: number }> =
-    [];
+  const out: Array<{
+    left: number;
+    top: number;
+    glyph: string;
+    size: number;
+    opacity: number;
+    dur: number;
+    delay: number;
+  }> = [];
   let x = seed;
   const next = () => (x = (x * 1103515245 + 12345) % 2147483648);
   for (let i = 0; i < count; i += 1) {
     const left = next() % 100;
     const top = next() % 100;
     const n = next();
+    const m = next();
     out.push({
       left,
       top,
-      size: 1 + (n % 3) * 0.5,
-      opacity: 0.14 + (n % 5) * 0.1,
-      delay: (i % 9) * 0.5,
+      glyph: STAR_GLYPHS[n % STAR_GLYPHS.length],
+      size: 9 + (m % 4),
+      opacity: 0.16 + (n % 5) * 0.09,
+      // Varied periods, or the whole sky pulses in step and reads as a
+      // flicker in the page rather than as stars.
+      dur: 3.5 + (m % 7) * 0.9,
+      delay: (i % 11) * 0.7,
     });
   }
   return out;
@@ -137,12 +153,14 @@ export function Landing() {
               style={{
                 left: `${s.left}%`,
                 top: `${s.top}%`,
-                width: s.size,
-                height: s.size,
-                opacity: s.opacity,
+                fontSize: s.size,
+                ["--o" as string]: s.opacity,
+                animationDuration: `${s.dur}s`,
                 animationDelay: `${s.delay}s`,
               }}
-            />
+            >
+              {s.glyph}
+            </span>
           ))}
         </div>
         <div className="starfield deep">
@@ -152,12 +170,14 @@ export function Landing() {
               style={{
                 left: `${s.left}%`,
                 top: `${s.top}%`,
-                width: s.size,
-                height: s.size,
-                opacity: s.opacity,
+                fontSize: s.size,
+                ["--o" as string]: s.opacity,
+                animationDuration: `${s.dur}s`,
                 animationDelay: `${s.delay}s`,
               }}
-            />
+            >
+              {s.glyph}
+            </span>
           ))}
         </div>
 

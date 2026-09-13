@@ -46,16 +46,16 @@ export interface Camera {
 const PATH: Array<[number, number, number, number]> = [
   // hero — a rim below the copy, nothing more
   [0.0, 50, 78, 210],
-  // connect — the whole globe swings into the right half. Far enough right,
-  // and small enough, that the copy column clears it by ~90px at every
-  // common width rather than the ~14px a centred 74vh globe left.
-  [0.26, 76, 27, 68],
+  // connect — the whole globe swings into the right half. Deliberately not
+  // filling it: the planet is scenery, and at 68vh it was the loudest thing
+  // on a page whose subject is the five markers standing on it.
+  [0.26, 76, 30, 54],
   // compose — held there while the run walks it
-  [0.5, 76, 27, 68],
+  [0.5, 76, 30, 54],
   // trace — falling away to the left, the right half freed for the timeline
-  [0.76, 26, 64, 30],
+  [0.76, 26, 62, 26],
   // fleet — far out, low and left
-  [1.0, 12, 76, 17],
+  [1.0, 12, 74, 15],
 ];
 
 export function cameraAt(progress: number): Camera {

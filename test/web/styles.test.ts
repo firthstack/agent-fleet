@@ -224,3 +224,23 @@ describe("the console stylesheet does not leak into the landing page", () => {
     expect(reset![1]).toMatch(/padding:\s*0/);
   });
 });
+
+/**
+ * Stars carry their own brightness through the twinkle. Setting it inline and
+ * letting the keyframes name a literal opacity looks right in the markup and
+ * is wrong on screen: CSS animations outrank inline style, so every star
+ * pulsed between the same two values and a sky of varied magnitudes came out
+ * as one flat blink.
+ */
+describe("the starfield keeps its magnitudes", () => {
+  const css = readFileSync(new URL("../../web/src/landing.css", import.meta.url), "utf8");
+
+  it("animates opacity from each star's own custom property", () => {
+    const frames = css.match(/@keyframes twinkle\s*\{([\s\S]*?)\n\}/);
+    expect(frames, "a twinkle keyframes block should exist").not.toBeNull();
+    const body = frames![1];
+    expect(body).toMatch(/opacity:\s*var\(--o/);
+    // A bare number anywhere in there would flatten the sky again.
+    expect(body).not.toMatch(/opacity:\s*[\d.]+\s*;/);
+  });
+});

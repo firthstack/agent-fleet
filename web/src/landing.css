@@ -78,19 +78,26 @@
   pointer-events: none;
 }
 
+/* Characters, not dots: the planet is drawn from an alphabet, and a sky of
+ * round pixels beside it read as two unrelated pictures. */
 .starfield span {
   position: absolute;
-  border-radius: 999px;
-  background: #e3e8ee;
+  font-family: var(--mono);
+  line-height: 1;
+  color: #cbd6e2;
+  user-select: none;
   animation: twinkle 5s ease-in-out infinite;
 }
+/* Each star keeps its own brightness through the cycle. The first version
+ * set opacity inline and let the keyframes overwrite it, so every star
+ * pulsed between the same two values and the sky read as one flat blink. */
 @keyframes twinkle {
   0%,
   100% {
-    opacity: 0.7;
+    opacity: var(--o, 0.3);
   }
   50% {
-    opacity: 0.18;
+    opacity: calc(var(--o, 0.3) * 0.22);
   }
 }
 
@@ -154,12 +161,16 @@
   white-space: pre;
   user-select: none;
 }
+/*
+ * Both layers sit well below the markers on top of them. The first pass gave
+ * land a halo and most of the ink on the page; the agents — the only thing
+ * here carrying meaning — disappeared into their own planet.
+ */
 .globe-layer.sea {
-  color: rgba(111, 179, 224, 0.3);
+  color: rgba(111, 179, 224, 0.17);
 }
 .globe-layer.land {
-  color: rgba(163, 205, 232, 0.82);
-  text-shadow: 0 0 14px rgba(111, 179, 224, 0.22);
+  color: rgba(150, 187, 214, 0.42);
 }
 
 .globe-links {
@@ -230,12 +241,14 @@
 
 .agent {
   position: absolute;
-  width: 7px;
-  height: 7px;
-  margin: -3.5px 0 0 -3.5px;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
   border-radius: 999px;
-  background: var(--accent);
-  box-shadow: 0 0 10px 1px rgba(111, 179, 224, 0.55);
+  background: #cfe6f7;
+  box-shadow:
+    0 0 0 2px rgba(7, 9, 12, 0.55),
+    0 0 14px 2px rgba(111, 179, 224, 0.75);
 }
 /* Connect: each on its own rhythm — agents that know nothing of each other. */
 .agent.flicker {
