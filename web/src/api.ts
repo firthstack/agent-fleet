@@ -68,6 +68,9 @@ export interface AgentStats {
   running: number;
   /** `createdAt` of the oldest still-active run; null when none are active. */
   runningSince: string | null;
+  /** Start/end of the most recently completed run; null when none has completed yet. */
+  lastRunStartedAt: string | null;
+  lastRunEndedAt: string | null;
 }
 
 export interface Agent {

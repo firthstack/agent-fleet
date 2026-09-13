@@ -557,6 +557,36 @@ describe("GatewayStore.agentTaskStats", () => {
     expect(stats.has("review-agent")).toBe(false);
   });
 
+  it("reports the start and end time of the most recently completed run", async () => {
+    const acme = await seed();
+
+    const earlier = await store.createTask({ tenantId: acme.id, ...args("dev-agent", "up-earlier") });
+    await store.failTask(earlier.id, { error: "unreachable" });
+
+    const latest = await store.createTask({ tenantId: acme.id, ...args("dev-agent", "up-latest") });
+    await store.attachDownstream(latest.id, { downstreamTaskId: "d1", callbackTokenHash: "h1" });
+    await store.recordDownstreamResult(latest.id, { ok: true });
+    const settled = await store.getTask(latest.id);
+
+    // Still running: must not be picked as "most recently completed".
+    await store.createTask({ tenantId: acme.id, ...args("dev-agent", "up-running") });
+
+    const stats = await store.agentTaskStats(acme.id);
+    const devAgent = stats.get("dev-agent");
+    expect(devAgent?.lastRunStartedAt).toBe(latest.createdAt);
+    expect(devAgent?.lastRunEndedAt).toBe(settled?.updatedAt);
+  });
+
+  it("reports no last-run timing when nothing has completed yet", async () => {
+    const acme = await seed();
+    await store.createTask({ tenantId: acme.id, ...args("dev-agent", "up-running") });
+
+    const stats = await store.agentTaskStats(acme.id);
+    const devAgent = stats.get("dev-agent");
+    expect(devAgent?.lastRunStartedAt).toBeNull();
+    expect(devAgent?.lastRunEndedAt).toBeNull();
+  });
+
   it("counts an agent-reported failure as failed, both before and after notification", async () => {
     const acme = await seed();
 

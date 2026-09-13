@@ -52,6 +52,10 @@ export interface AgentTaskStats {
   running: number;
   /** `created_at` of the oldest task still `dispatching`/`running`; null when none are. */
   runningSince: string | null;
+  /** `created_at` / `updated_at` of the most recently completed (succeeded or failed)
+   *  task; null when none has completed yet. */
+  lastRunStartedAt: string | null;
+  lastRunEndedAt: string | null;
 }
 
 export interface FleetTaskRecord {
@@ -617,15 +621,20 @@ export class GatewayStore {
         failed: string;
         running: string;
         oldest_running: Date | null;
+        last_run_started_at: Date | null;
+        last_run_ended_at: Date | null;
       }>(
         `SELECT target_agent_id,
            COUNT(*) AS total,
            COUNT(*) FILTER (WHERE outcome = 'succeeded') AS succeeded,
            COUNT(*) FILTER (WHERE outcome = 'failed') AS failed,
            COUNT(*) FILTER (WHERE outcome = 'running') AS running,
-           MIN(created_at) FILTER (WHERE outcome = 'running') AS oldest_running
+           MIN(created_at) FILTER (WHERE outcome = 'running') AS oldest_running,
+           (array_agg(created_at ORDER BY updated_at DESC)
+             FILTER (WHERE outcome IN ('succeeded', 'failed')))[1] AS last_run_started_at,
+           MAX(updated_at) FILTER (WHERE outcome IN ('succeeded', 'failed')) AS last_run_ended_at
          FROM (
-           SELECT target_agent_id, created_at,
+           SELECT target_agent_id, created_at, updated_at,
              CASE
                WHEN state IN ('dispatching', 'running') THEN 'running'
                WHEN state IN ('failed', 'timed_out') THEN 'failed'
@@ -653,6 +662,8 @@ export class GatewayStore {
           failed: Number(row.failed),
           running: Number(row.running),
           runningSince: iso(row.oldest_running),
+          lastRunStartedAt: iso(row.last_run_started_at),
+          lastRunEndedAt: iso(row.last_run_ended_at),
         });
       }
       return stats;

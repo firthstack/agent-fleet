@@ -53,3 +53,21 @@ export function gapBetween(a: string, b: string): { text: string; slow: boolean 
   if (s < 3600) return { text: `${Math.round(s / 60)}m`, slow: s > 600 };
   return { text: `${(s / 3600).toFixed(1)}h`, slow: true };
 }
+
+/**
+ * The agent card's "last run" line: how long ago it finished, headlined with
+ * how long it took — the detail (exact start/end) goes in `title`, a tooltip,
+ * so the card itself stays scannable.
+ */
+export function lastRunSummary(
+  startedAt: string | null,
+  endedAt: string | null,
+): { text: string; title: string } | null {
+  if (!endedAt) return null;
+  const gap = startedAt ? gapBetween(startedAt, endedAt) : null;
+  const text = `last run ${ago(endedAt)} ago${gap ? ` · took ${gap.text}` : ""}`;
+  const title = startedAt
+    ? `${new Date(startedAt).toLocaleString()} \u2192 ${new Date(endedAt).toLocaleString()}`
+    : new Date(endedAt).toLocaleString();
+  return { text, title };
+}

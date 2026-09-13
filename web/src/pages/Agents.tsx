@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { listAgents, type Agent } from "../api.ts";
 import { HealthPill, Shell } from "../components/Shell.tsx";
-import { ago } from "../runFormat.ts";
+import { ago, lastRunSummary } from "../runFormat.ts";
 
 /** The run counts a card shows: how much it has done, and whether any of it
  *  is still in flight (title captures both — issue #3). */
@@ -10,17 +10,25 @@ function AgentStats({ stats }: { stats: Agent["stats"] }) {
   if (stats.totalRuns === 0) {
     return <p className="row-sub">no runs yet</p>;
   }
+  const lastRun = lastRunSummary(stats.lastRunStartedAt, stats.lastRunEndedAt);
   return (
-    <p className="row-sub agent-stats" title="Snapshot as of page load — refresh to update">
-      <span>{stats.totalRuns} run{stats.totalRuns === 1 ? "" : "s"}</span>
-      {stats.succeeded > 0 ? <span className="pill ok">{stats.succeeded} ok</span> : null}
-      {stats.failed > 0 ? <span className="pill bad">{stats.failed} failed</span> : null}
-      {stats.running > 0 ? (
-        <span className="pill live" title={stats.runningSince ?? ""}>
-          {stats.running} running{stats.runningSince ? ` · ${ago(stats.runningSince)}` : ""}
-        </span>
+    <>
+      <p className="row-sub agent-stats" title="Snapshot as of page load — refresh to update">
+        <span>{stats.totalRuns} run{stats.totalRuns === 1 ? "" : "s"}</span>
+        {stats.succeeded > 0 ? <span className="pill ok">{stats.succeeded} ok</span> : null}
+        {stats.failed > 0 ? <span className="pill bad">{stats.failed} failed</span> : null}
+        {stats.running > 0 ? (
+          <span className="pill live" title={stats.runningSince ?? ""}>
+            {stats.running} running{stats.runningSince ? ` · ${ago(stats.runningSince)}` : ""}
+          </span>
+        ) : null}
+      </p>
+      {lastRun ? (
+        <p className="row-sub" title={lastRun.title}>
+          {lastRun.text}
+        </p>
       ) : null}
-    </p>
+    </>
   );
 }
 
