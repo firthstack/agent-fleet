@@ -161,6 +161,8 @@ export function Landing() {
           ))}
         </div>
 
+        {/* the hero's horizon, handed over to the globe as the camera pulls out */}
+        <div className="horizon" style={globe} />
         <AsciiGlobe style={globe} stage={stage} />
 
         {/* 03 — the state graph laid out in time, in the freed right half */}

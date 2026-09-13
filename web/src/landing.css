@@ -35,6 +35,26 @@
   color-scheme: dark;
 }
 
+/*
+ * `styles.css` styles bare `pre`, `code` and `input` for the console, and the
+ * landing page renders in the same document — so those rules land here too.
+ * `pre` arrived carrying a `--surface` background, a border, padding and
+ * `overflow-x: auto`; on a light-mode machine that painted the ASCII globe as
+ * a white box with scrollbars, and every code panel white on dark. Neutralise
+ * them here, where the page defines its own ground, rather than meeting each
+ * one in a screenshot.
+ */
+.site pre {
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+  font-size: inherit;
+  line-height: inherit;
+}
+
 .site a {
   color: var(--accent);
   text-decoration: none;
@@ -80,10 +100,36 @@
 /* The box comes from `cameraAt()` as inline left/top/width/height; CSS only
  * paints it. `left`/`top` address the globe's centre-x and top edge, so the
  * horizon sits exactly where the path says — under the headline in the hero. */
-.globe {
+.globe,
+.horizon {
   position: absolute;
   transform: translateX(-50%);
   will-change: left, top, width, height;
+}
+
+/*
+ * Two different shots, not two drawings of one thing: the hero stands on the
+ * ground and sees a rim, and from the first stop on you are far enough out
+ * for a globe. Rendering the ASCII sphere at the hero's 210vh would have
+ * meant a handful of glyphs the size of the headline.
+ */
+.horizon {
+  border-radius: 50%;
+  background: radial-gradient(circle at 62% 22%, #10171f 0%, #0a0e13 52%, #06080b 100%);
+  box-shadow:
+    0 -1px 0 0 rgba(111, 179, 224, 0.5),
+    0 -30px 80px -26px rgba(111, 179, 224, 0.2);
+  transition: opacity 0.5s ease;
+}
+.globe {
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+.site:not([data-stage="0"]) .globe {
+  opacity: 1;
+}
+.site:not([data-stage="0"]) .horizon {
+  opacity: 0;
 }
 
 /*
@@ -93,15 +139,18 @@
  * deliberate mark"; characters are unambiguously the second, and they are
  * the vocabulary the rest of the page already speaks.
  */
+/* Sized by its own text and centred, never constrained to the box: a `<pre>`
+ * pinned to `inset: 0` is a hair narrower than 44 characters, and the browser
+ * answers that with scrollbars. */
 .globe-layer {
   position: absolute;
-  inset: 0;
-  margin: 0;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   font-family: var(--mono);
   line-height: 1;
   letter-spacing: 0;
   white-space: pre;
-  text-align: center;
   user-select: none;
 }
 .globe-layer.sea {

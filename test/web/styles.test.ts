@@ -186,3 +186,41 @@ describe("landing scene stroke widths", () => {
     expect(body).toMatch(/animation:\s*flow/);
   });
 });
+
+/**
+ * The landing page renders in the same document as the console, so every bare
+ * element selector in `styles.css` reaches it. `pre` did: it arrived with a
+ * `--surface` background, a border, padding and `overflow-x: auto`, which on
+ * a light-mode machine drew the ASCII globe as a white box with scrollbars.
+ *
+ * Anything in the console sheet that boxes an element has to be answered in
+ * the landing sheet, or the next one lands the same way.
+ */
+describe("the console stylesheet does not leak into the landing page", () => {
+  const consoleCss = readFileSync(new URL("../../web/src/styles.css", import.meta.url), "utf8");
+  const landing = readFileSync(new URL("../../web/src/landing.css", import.meta.url), "utf8");
+  const markup = ["../../web/src/pages/Landing.tsx", "../../web/src/components/AsciiGlobe.tsx"]
+    .map((f) => readFileSync(new URL(f, import.meta.url), "utf8"))
+    .join("\n");
+
+  /** Bare element rules that give the element a box of its own. */
+  const boxing = [...consoleCss.matchAll(/^([a-z][a-z0-9]*)\s*\{([^}]*)\}/gm)]
+    .filter(([, , body]) => /(^|\s)(background|border|padding|overflow)/.test(body))
+    .map(([, tag]) => tag);
+
+  it("finds the console's boxing element rules at all", () => {
+    // If this ever empties, the test below has quietly stopped testing.
+    expect(boxing.length).toBeGreaterThan(0);
+  });
+
+  const used = boxing.filter((tag) => new RegExp(`<${tag}[\\s>]`).test(markup));
+
+  it.each(used)("answers the bare `%s` rule with a .site reset", (tag) => {
+    const reset = landing.match(new RegExp(`\\.site ${tag}\\s*\\{([^}]*)\\}`));
+    expect(reset, `landing.css needs a \`.site ${tag}\` rule`).not.toBeNull();
+    // It has to actually undo the box, not merely exist.
+    expect(reset![1]).toMatch(/background:\s*(none|transparent)/);
+    expect(reset![1]).toMatch(/border:\s*0/);
+    expect(reset![1]).toMatch(/padding:\s*0/);
+  });
+});
