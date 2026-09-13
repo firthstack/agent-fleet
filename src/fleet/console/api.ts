@@ -356,6 +356,8 @@ const EMPTY_STATS: AgentTaskStats = {
   failed: 0,
   running: 0,
   runningSince: null,
+  lastRunStartedAt: null,
+  lastRunEndedAt: null,
 };
 
 /** The card is tenant-controlled and can be large; the console shows the

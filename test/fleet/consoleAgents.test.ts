@@ -191,7 +191,15 @@ function fixture() {
     async agentTaskStats(tenantId, agentId) {
       const stats = new Map<
         string,
-        { totalRuns: number; succeeded: number; failed: number; running: number; runningSince: string | null }
+        {
+          totalRuns: number;
+          succeeded: number;
+          failed: number;
+          running: number;
+          runningSince: string | null;
+          lastRunStartedAt: string | null;
+          lastRunEndedAt: string | null;
+        }
       >();
       for (const task of tasks) {
         if (task.tenantId !== tenantId) continue;
@@ -202,6 +210,8 @@ function fixture() {
           failed: 0,
           running: 0,
           runningSince: null as string | null,
+          lastRunStartedAt: null as string | null,
+          lastRunEndedAt: null as string | null,
         };
         entry.totalRuns += 1;
         if (task.state === "done" || task.state === "done_pending_notify") entry.succeeded += 1;
@@ -211,6 +221,14 @@ function fixture() {
           if (entry.runningSince === null || task.createdAt < entry.runningSince) {
             entry.runningSince = task.createdAt;
           }
+        }
+        if (
+          (task.state === "done" || task.state === "done_pending_notify" || task.state === "failed" ||
+            task.state === "timed_out") &&
+          (entry.lastRunEndedAt === null || task.updatedAt > entry.lastRunEndedAt)
+        ) {
+          entry.lastRunStartedAt = task.createdAt;
+          entry.lastRunEndedAt = task.updatedAt;
         }
         stats.set(task.targetAgentId, entry);
       }
