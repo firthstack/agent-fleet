@@ -339,7 +339,7 @@
   user-select: none;
   animation: bob 6s ease-in-out infinite;
 }
-.craft-glyph.empty {
+.craft-glyph.vacant {
   color: rgba(148, 160, 174, 0.42);
 }
 .formation-label {

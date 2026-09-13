@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 // The header nav (`Shell.tsx`) renders three `<Link>`s as siblings with no
@@ -319,5 +319,80 @@ describe("landing animations that move a centred element", () => {
         );
       }
     }
+  });
+});
+
+/**
+ * Dead CSS is not inert.
+ *
+ * The run page's state names were clipped to five letters because two
+ * generations of `.chain` rules had piled up in this file: the newer block
+ * did not set `grid-template-columns`, so the older one's `22px` first column
+ * was still in force, and the row's head was rendered inside it. Nothing in
+ * the markup said 22px anywhere.
+ *
+ * The tell, both times, was a rule nothing rendered any more — `.chain-row .n`
+ * matched a span no component produced, and a whole `.hero` / `.eyebrow`
+ * block outlived the placeholder page it was written for while the real
+ * landing page went on using both of those names.
+ */
+describe("the app stylesheet", () => {
+  const css = readFileSync(new URL("../../web/src/styles.css", import.meta.url), "utf8");
+
+  /** Every class the stylesheet has an opinion about. */
+  function classesIn(text: string): string[] {
+    const stripped = text.replace(/\/\*[\s\S]*?\*\//g, "");
+    return [...new Set([...stripped.matchAll(/\.([A-Za-z][\w-]*)/g)].map((m) => m[1]))];
+  }
+
+  /**
+   * Everything the app could name a class with. Class names are assembled at
+   * runtime here (`pill ${runTone(state)}`), so the tones live in .ts files
+   * and a plain word search is the honest way to look for them.
+   */
+  function sourceWords(): Set<string> {
+    const dir = new URL("../../web/src/", import.meta.url);
+    const out = new Set<string>();
+    const walk = (at: URL) => {
+      for (const entry of readdirSync(at, { withFileTypes: true })) {
+        const next = new URL(entry.name + (entry.isDirectory() ? "/" : ""), at);
+        if (entry.isDirectory()) {
+          walk(next);
+        } else if (/\.tsx?$/.test(entry.name) && !/landing/i.test(entry.name)) {
+          for (const w of readFileSync(next, "utf8").match(/[A-Za-z][\w-]*/g) ?? []) {
+            out.add(w);
+          }
+        }
+      }
+    };
+    walk(dir);
+    return out;
+  }
+
+  it("styles nothing the app no longer renders", () => {
+    const words = sourceWords();
+    const orphans = classesIn(css).filter((c) => !words.has(c));
+    expect(orphans, `no markup uses: ${orphans.join(", ")}`).toEqual([]);
+  });
+
+  it("does not define the landing page's own class names", () => {
+    // `styles.css` is loaded globally and `landing.css` only on `/`, so a
+    // name in both is decided by import order — which is not a decision.
+    const landing = readFileSync(new URL("../../web/src/landing.css", import.meta.url), "utf8");
+    const scoped = new Set(classesIn(landing.replace(/\.site\b/g, "")));
+    // `.site` itself is the scope, and tone words are deliberately shared.
+    const shared = new Set(["site", "ok", "bad", "warn", "live", "quiet", "wide", "spacer"]);
+    // Only an UNSCOPED class can reach across. `pre .k` cannot match anything
+    // the landing page renders; a bare `.empty` matched every one of them,
+    // and was putting a dashed border and 14px of padding on a glyph.
+    const bare = new Set<string>();
+    for (const [, selector] of css.matchAll(/(?:^|\})\s*([^{}@]+?)\s*\{/g)) {
+      for (const part of selector.split(",")) {
+        const one = part.trim();
+        if (/^\.[A-Za-z][\w-]*$/.test(one)) bare.add(one.slice(1));
+      }
+    }
+    const collisions = [...bare].filter((c) => scoped.has(c) && !shared.has(c));
+    expect(collisions, `defined in both stylesheets: ${collisions.join(", ")}`).toEqual([]);
   });
 });

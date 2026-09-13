@@ -283,7 +283,7 @@ export function Landing() {
                   &lt;=&gt;
                 </span>
               ))}
-              <span className="craft-glyph empty" style={{ left: "46%", top: "72%", animationDelay: "4s" }}>
+              <span className="craft-glyph vacant" style={{ left: "46%", top: "72%", animationDelay: "4s" }}>
                 &lt;&middot;&gt;
               </span>
               <span className="formation-label" style={{ left: "46%", top: "87%" }}>
