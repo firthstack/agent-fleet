@@ -13,6 +13,16 @@ import { ago, isTerminal, isWaitingForSlot, runTone } from "../runFormat.ts";
  */
 const POLL_MS = 5000;
 
+/**
+ * One character that survives a squint. Filled ring = finished either way,
+ * hollow = not started, solid = in flight — the state name carries the rest,
+ * and the colour carries which kind of finished.
+ */
+function runGlyph(run: WorkflowRun): string {
+  if (isWaitingForSlot(run)) return "○";
+  return isTerminal(run.state) ? "◉" : "●";
+}
+
 export function Runs() {
   const [runs, setRuns] = useState<WorkflowRun[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -75,37 +85,43 @@ export function Runs() {
                   : ""}
                 .
               </p>
-              <ul className="rows">
-                {runs.map((run) => (
-                  <li key={run.id} className="row">
-                    <div className="row-head">
-                      <Link to={`/app/runs/${run.id}`}>
-                        <code>#{run.id}</code>
-                      </Link>
-                      <span className="row-name">{run.status}</span>
-                      {isWaitingForSlot(run) ? (
-                        <span className="pill">queued</span>
-                      ) : (
-                        <span className={`pill ${runTone(run.state)}`}>{run.state}</span>
-                      )}
-                      <span className="spacer" />
-                      <span className="age" title={run.updatedAt ?? ""}>
+              <div className="run-table">
+                {runs.map((run) => {
+                  const waiting = isWaitingForSlot(run);
+                  const ahead = waiting ? queue.findIndex((q) => q.id === run.id) : -1;
+                  return (
+                    <Link
+                      to={`/app/runs/${run.id}`}
+                      key={run.id}
+                      className="run-row"
+                    >
+                      <span className="run-id">#{run.id}</span>
+                      <span className="run-what">{run.status}</span>
+                      <span className={`pill ${waiting ? "" : runTone(run.state)}`}>
+                        <span className="glyph">{runGlyph(run)}</span>
+                        {waiting ? "queued" : run.state}
+                      </span>
+                      <span className="run-src">
+                        {run.sourceType} · {run.sourceRef}
+                      </span>
+                      <span className="run-note">
+                        {run.reason
+                          ? run.reason
+                          : run.awaitingTaskId
+                            ? `on task ${run.awaitingTaskId}`
+                            : waiting
+                              ? ahead === 0
+                                ? "next in line"
+                                : `${ahead} ahead`
+                              : ""}
+                      </span>
+                      <span className="run-age" title={run.updatedAt ?? ""}>
                         {ago(run.updatedAt)}
                       </span>
-                    </div>
-                    <p className="row-sub">
-                      <code>{run.sourceType}</code> · <code>{run.sourceRef}</code>
-                      {run.reason ? ` · ${run.reason}` : ""}
-                      {run.awaitingTaskId ? ` · waiting on task ${run.awaitingTaskId}` : ""}
-                      {isWaitingForSlot(run)
-                        ? queue[0]?.id === run.id
-                          ? " · next in line for a slot"
-                          : ` · ${queue.findIndex((q) => q.id === run.id)} ahead of it`
-                        : ""}
-                    </p>
-                  </li>
-                ))}
-              </ul>
+                    </Link>
+                  );
+                })}
+              </div>
             </>
           )}
         </>

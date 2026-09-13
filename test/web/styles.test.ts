@@ -41,3 +41,66 @@ describe("code editor and diagram scrollbars", () => {
     expect(css).toMatch(/textarea\.code::-webkit-scrollbar-track,\s*\n\.diagram::-webkit-scrollbar-track\s*\{[^}]*var\(--surface-2\)/);
   });
 });
+
+// The landing page is a night sky in both themes. `styles.css` flips its
+// tokens with `prefers-color-scheme`, so anything the space scene reads from
+// them would invert on a light-mode visitor's machine — the ground would go
+// white behind the stars.
+describe("the landing page owns its palette", () => {
+  const css = readFileSync(new URL("../../web/src/landing.css", import.meta.url), "utf8");
+
+  it("declares its own ground and ink rather than inheriting the console's", () => {
+    const site = css.match(/\.site\s*\{([^}]*)\}/);
+    expect(site, ".site rule should exist in landing.css").not.toBeNull();
+    const body = site![1];
+    expect(body).toMatch(/--ground:\s*#[0-9a-f]{3,8}/i);
+    expect(body).toMatch(/--ink:\s*#[0-9a-f]{3,8}/i);
+    expect(body).toMatch(/--accent:\s*#[0-9a-f]{3,8}/i);
+  });
+
+  it("reads no themed token from the console stylesheet", () => {
+    // Fonts are theme-independent and shared on purpose; colour is not.
+    const themed = css.match(/var\(--(surface|rule|muted-token|bg|live|ok|warn|bad)[\w-]*\)/g);
+    expect(themed, `landing.css should not read console colour tokens: ${themed}`).toBeNull();
+  });
+});
+
+// The scene is painted behind the whole page. Without this it would swallow
+// every click and hover on the content sitting above it.
+describe("the landing scene stays out of the way", () => {
+  const css = readFileSync(new URL("../../web/src/landing.css", import.meta.url), "utf8");
+
+  it("never takes pointer events", () => {
+    const scene = css.match(/\.scene\s*\{([^}]*)\}/);
+    expect(scene, ".scene rule should exist").not.toBeNull();
+    expect(scene![1]).toMatch(/pointer-events:\s*none/);
+  });
+
+  it("holds the camera still for anyone who asked for less motion", () => {
+    expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
+    const block = css.slice(css.indexOf("prefers-reduced-motion"));
+    expect(block).toMatch(/animation:\s*none/);
+  });
+});
+
+// The point of /app/runs is scanning twenty rows for the one that is stuck.
+// Cards would fit five on a screen; the row has to stay a grid.
+describe("the run table stays scannable", () => {
+  const css = readFileSync(new URL("../../web/src/styles.css", import.meta.url), "utf8");
+
+  it("lays each run out as a grid row, not a stacked card", () => {
+    const row = css.match(/\.run-row\s*\{([^}]*)\}/);
+    expect(row, ".run-row rule should exist in styles.css").not.toBeNull();
+    const body = row![1];
+    expect(body).toMatch(/display:\s*grid/);
+    const cols = body.match(/grid-template-columns:\s*([^;]+)/)?.[1] ?? "";
+    // id · status · state · source · note · age
+    expect(cols.split(/\s+(?![^(]*\))/).length).toBeGreaterThanOrEqual(5);
+  });
+
+  it("keeps the state pill starting at the same x on every row", () => {
+    const pill = css.match(/\.run-row \.pill\s*\{([^}]*)\}/);
+    expect(pill, ".run-row .pill rule should exist").not.toBeNull();
+    expect(pill![1]).toMatch(/justify-self:\s*start/);
+  });
+});

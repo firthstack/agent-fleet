@@ -1,0 +1,469 @@
+/*
+ * The landing page, and only the landing page.
+ *
+ * Deliberately outside the console's theme: `styles.css` flips its tokens
+ * with `prefers-color-scheme`, and this page is a night sky either way — a
+ * light variant of it would be a different page, not a lighter one. So the
+ * colours here are literal, scoped under `.site`, and never read a token.
+ *
+ * One scroll progress variable, `--p` (0 → 1 across the page), drives the
+ * camera; `data-stage` picks which overlay is lit. Both are written by
+ * Landing.tsx on a rAF-throttled scroll. Scroll-linked CSS timelines would
+ * be tidier, but support is still uneven enough that the page would simply
+ * not move for a chunk of visitors.
+ */
+
+.site {
+  --ink: #e3e8ee;
+  --muted: #94a0ae;
+  --dim: #5f6b78;
+  --accent: #6fb3e0;
+  --ground: #07090c;
+  --panel: rgba(11, 16, 22, 0.82);
+  --hair: rgba(111, 179, 224, 0.18);
+
+  position: relative;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  /* The console's tokens set `color-scheme` per theme; this page paints its
+   * own ground, so tell the UA what its scrollbars belong to. */
+  color-scheme: dark;
+}
+
+.site a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.site a:hover {
+  color: #9acbeb;
+}
+
+/* ------------------------------------------------------------- the scene */
+
+/* One pinned layer behind everything. The planet is a single element whose
+ * scale and offset are keyframed by `--p`, so the five stops read as one
+ * camera move rather than five pictures. */
+.scene {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.starfield span {
+  position: absolute;
+  border-radius: 999px;
+  background: #e3e8ee;
+  animation: twinkle 5s ease-in-out infinite;
+}
+@keyframes twinkle {
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 0.18;
+  }
+}
+
+/* The far field fades up as the camera pulls back — more sky, less ground. */
+.starfield.deep {
+  opacity: calc(0.25 + var(--p, 0) * 0.75);
+}
+
+.earth {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 1500px;
+  height: 1500px;
+  border-radius: 50%;
+  background: #0a0e13;
+  box-shadow:
+    0 -1px 0 0 rgba(111, 179, 224, 0.5),
+    0 -30px 80px -26px rgba(111, 179, 224, 0.2);
+  /* scale and lift are one continuous function of scroll: a 2× globe sunk
+   * below the fold at the top, a small one high in frame at the bottom. */
+  transform: translateX(-50%)
+    translateY(calc(880px - var(--p, 0) * 300px))
+    scale(calc(2 - var(--p, 0) * 1.8));
+  transform-origin: 50% 0;
+  will-change: transform;
+}
+
+/* Stages: all drawn, one lit. The overlays sit in the planet's frame, so a
+ * dot at "Tokyo" stays at Tokyo while the camera moves. */
+.stage {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.55s ease;
+}
+.site[data-stage="1"] .s-connect,
+.site[data-stage="2"] .s-compose,
+.site[data-stage="3"] .s-trace,
+.site[data-stage="4"] .s-fleet {
+  opacity: 1;
+}
+
+.agent {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  margin: -3.5px 0 0 -3.5px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 10px 1px rgba(111, 179, 224, 0.55);
+}
+/* Connect: each on its own rhythm — agents that know nothing of each other. */
+.agent.flicker {
+  animation: flicker 2.6s ease-in-out infinite;
+}
+@keyframes flicker {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+/* Compose: the same dots, now lighting in turn — one run walking the fleet. */
+.agent.chase {
+  animation: chase 4s linear infinite;
+}
+@keyframes chase {
+  0%,
+  14% {
+    opacity: 1;
+    transform: scale(1.6);
+  }
+  24%,
+  100% {
+    opacity: 0.22;
+    transform: scale(1);
+  }
+}
+
+.link {
+  stroke: var(--accent);
+  stroke-width: 1.3;
+  fill: none;
+  stroke-dasharray: 240;
+  animation: draw 4s linear infinite;
+}
+@keyframes draw {
+  0% {
+    stroke-dashoffset: 240;
+  }
+  18%,
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+.craft {
+  animation: bob 6s ease-in-out infinite;
+}
+@keyframes bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-7px);
+  }
+}
+
+/* Anyone who has asked for less movement gets the globe, held still. */
+@media (prefers-reduced-motion: reduce) {
+  .site .starfield span,
+  .site .agent,
+  .site .link,
+  .site .craft {
+    animation: none;
+  }
+  .site .earth {
+    transform: translateX(-50%) translateY(560px) scale(1);
+  }
+  .site .stage {
+    transition: none;
+  }
+}
+
+/* ----------------------------------------------------------- the content */
+
+.site-body {
+  position: relative;
+  z-index: 1;
+}
+
+.site-nav {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 22px 40px;
+}
+.site-nav .wordmark {
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 600;
+}
+.site-nav .links {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+
+.site-cta {
+  background: var(--accent);
+  color: var(--ground);
+  font-weight: 600;
+  font-size: 13px;
+  padding: 7px 14px;
+  border-radius: 6px;
+}
+.site-cta.big {
+  font-size: 15px;
+  padding: 13px 26px;
+}
+.site-cta.big:hover {
+  color: var(--ground);
+  background: #8cc3e8;
+}
+.site-ghost {
+  border: 1px solid #3a434e;
+  color: var(--ink);
+  font-size: 15px;
+  padding: 12px 24px;
+  border-radius: 6px;
+}
+.site-ghost:hover {
+  color: var(--ink);
+  border-color: var(--muted);
+}
+
+/* Each stop is a screenful: the scene gets room to change between them. */
+.stop {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  padding: 80px 40px;
+}
+.stop > div {
+  max-width: 1180px;
+  margin: 0 auto;
+  width: 100%;
+}
+.stop.centred {
+  justify-content: center;
+  text-align: center;
+}
+.stop.centred > div {
+  max-width: 840px;
+}
+
+.site .eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 14px;
+}
+.site .eyebrow.quiet {
+  color: var(--muted);
+  letter-spacing: 0.18em;
+  margin-bottom: 30px;
+}
+
+.wordmark-hero {
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: clamp(48px, 7.2vw, 100px);
+  line-height: 0.98;
+  letter-spacing: -0.045em;
+  margin: 0 0 28px;
+}
+.wordmark-hero .run {
+  color: var(--accent);
+}
+
+.site h2 {
+  font-size: clamp(26px, 3.2vw, 36px);
+  letter-spacing: -0.028em;
+  font-weight: 600;
+  margin: 0 0 14px;
+  max-width: 18ch;
+}
+.stop.centred h2 {
+  max-width: none;
+}
+.site .blurb {
+  font-size: 16.5px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: 0 0 30px;
+  max-width: 52ch;
+}
+.stop.centred .blurb {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.four-words {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--hair);
+  border: 1px solid var(--hair);
+  border-radius: 6px;
+  overflow: hidden;
+  max-width: 680px;
+  margin: 0 auto 36px;
+}
+.four-words span {
+  background: rgba(7, 9, 12, 0.8);
+  padding: 17px 8px;
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+.site-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.stop.centred .site-actions {
+  justify-content: center;
+}
+
+/* The concrete thing each stop closes on. Translucent so the scene shows
+ * through — the panel is on top of the sky, not cut out of it. */
+.artifact {
+  border: 1px solid var(--hair);
+  border-radius: 6px;
+  background: var(--panel);
+  backdrop-filter: blur(3px);
+  overflow: hidden;
+  max-width: 620px;
+}
+.artifact.wide {
+  max-width: 760px;
+}
+.artifact-head {
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(111, 179, 224, 0.14);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.artifact pre {
+  margin: 0;
+  padding: 16px 18px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.8;
+  color: #b9c3ce;
+  overflow-x: auto;
+}
+.artifact .shell {
+  padding: 16px 18px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.95;
+}
+.artifact .shell .prompt,
+.artifact .shell .arg {
+  color: var(--muted);
+}
+.artifact .shell .ok {
+  color: #63c79a;
+}
+
+.artifact-row {
+  display: grid;
+  gap: 16px;
+  align-items: center;
+  padding: 12px 18px;
+  border-bottom: 1px solid rgba(111, 179, 224, 0.1);
+}
+.artifact-row:last-child {
+  border-bottom: 0;
+}
+.artifact-row.trace {
+  grid-template-columns: 180px 1fr 80px;
+}
+.artifact-row.hop {
+  grid-template-columns: 28px 1fr minmax(0, 200px);
+}
+.artifact-row .k {
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.artifact-row .v {
+  font-size: 13.5px;
+  color: var(--muted);
+}
+.artifact-row .t {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--dim);
+  text-align: right;
+}
+
+.scroll-cue {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--dim);
+  margin: 48px 0 0;
+}
+
+.site-foot {
+  border-top: 1px solid rgba(111, 179, 224, 0.12);
+}
+.site-foot > div {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 26px 40px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--dim);
+}
+
+@media (max-width: 780px) {
+  .four-words {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .stop {
+    padding: 64px 20px;
+  }
+  .site-nav {
+    padding: 18px 20px;
+    gap: 16px;
+  }
+  .site-nav .links {
+    gap: 16px;
+    font-size: 13px;
+  }
+  .artifact-row.trace {
+    grid-template-columns: 130px 1fr 64px;
+  }
+  .artifact-row.hop {
+    grid-template-columns: 24px 1fr;
+  }
+  .artifact-row.hop .t {
+    display: none;
+  }
+}
