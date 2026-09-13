@@ -34,7 +34,9 @@ export interface CreateAuthOptions {
 export function createAuth(opts: CreateAuthOptions) {
   const connectionString = opts.connectionString;
   return betterAuth({
-    appName: "agent-fleet",
+    // User-visible: Better Auth puts it in the mail it sends. Kept in step
+    // with the web app's PRODUCT_NAME by test/web/product.test.ts.
+    appName: "Fleet",
     ...(opts.baseURL ? { baseURL: opts.baseURL } : {}),
     basePath: "/api/auth",
     database: new Pool({ connectionString, ssl: ssl(connectionString), max: 4 }),

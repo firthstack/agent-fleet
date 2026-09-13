@@ -186,9 +186,6 @@ code,
 .brand:hover {
   text-decoration: none;
 }
-.brand .dot {
-  color: var(--accent);
-}
 .spacer {
   flex: 1;
 }
@@ -929,4 +926,86 @@ textarea.code::-webkit-scrollbar-thumb:hover,
   background: var(--accent-soft);
   color: var(--accent);
   font-weight: 600;
+}
+
+/* --------------------------------------------------------- the run table */
+
+/*
+ * Runs read as a table, not as cards: the point of the page is scanning
+ * twenty rows for the one that is stuck, and a card's padding is what stops
+ * you seeing twenty at once.
+ */
+.run-table {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.run-row {
+  display: grid;
+  grid-template-columns: 66px minmax(0, 1fr) 150px minmax(0, 1fr) minmax(0, 150px) 58px;
+  gap: 14px;
+  align-items: center;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--rule);
+  color: var(--ink);
+  text-decoration: none;
+}
+.run-row:last-child {
+  border-bottom: 0;
+}
+.run-row:hover {
+  background: var(--surface-2);
+}
+
+.run-id {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.run-what {
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The pill is the one thing scanned down the column, so it sits at a fixed
+ * width and starts at the same x on every row. */
+.run-row .pill {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.run-row .glyph {
+  font-size: 9px;
+  line-height: 1;
+}
+.run-src,
+.run-note {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-note {
+  color: var(--dim, #7c8794);
+}
+.run-age {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  text-align: right;
+}
+
+@media (max-width: 860px) {
+  .run-row {
+    grid-template-columns: 58px minmax(0, 1fr) 120px 52px;
+  }
+  .run-src,
+  .run-note {
+    display: none;
+  }
 }

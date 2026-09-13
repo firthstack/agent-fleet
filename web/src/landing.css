@@ -1,0 +1,728 @@
+/*
+ * The landing page, and only the landing page.
+ *
+ * Deliberately outside the console's theme: `styles.css` flips its tokens
+ * with `prefers-color-scheme`, and this page is a night sky either way — a
+ * light variant of it would be a different page, not a lighter one. So the
+ * colours here are literal, scoped under `.site`, and never read a token.
+ *
+ * The camera is computed in `landingCamera.ts` and arrives as inline
+ * left/top/width/height on the globe — the path crosses the frame and doubles
+ * back, which interpolated custom properties could not express readably.
+ * `--p` is left for the one thing that is a straight ramp (the far starfield),
+ * and `data-stage` picks which overlay is lit.
+ *
+ * A rAF-throttled scroll listener rather than a scroll-linked CSS timeline:
+ * support is still uneven enough that the page would simply not move for a
+ * share of visitors.
+ */
+
+.site {
+  --ink: #e3e8ee;
+  --muted: #94a0ae;
+  --dim: #5f6b78;
+  --accent: #6fb3e0;
+  --ground: #07090c;
+  --panel: rgba(11, 16, 22, 0.82);
+  --hair: rgba(111, 179, 224, 0.18);
+
+  position: relative;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  /* The console's tokens set `color-scheme` per theme; this page paints its
+   * own ground, so tell the UA what its scrollbars belong to. */
+  color-scheme: dark;
+}
+
+/*
+ * `styles.css` styles bare `pre`, `code` and `input` for the console, and the
+ * landing page renders in the same document — so those rules land here too.
+ * `pre` arrived carrying a `--surface` background, a border, padding and
+ * `overflow-x: auto`; on a light-mode machine that painted the ASCII globe as
+ * a white box with scrollbars, and every code panel white on dark. Neutralise
+ * them here, where the page defines its own ground, rather than meeting each
+ * one in a screenshot.
+ */
+.site pre {
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+  /* Deliberately not font-size or line-height: every `pre` under `.site` sets
+   * its own, and a reset here out-specifies a plain class like
+   * `.globe-layer` — which is how 26 rows at line-height 1.6 turned the
+   * globe into a standing ellipse. */
+}
+
+.site a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.site a:hover {
+  color: #9acbeb;
+}
+
+/* ------------------------------------------------------------- the scene */
+
+/* One pinned layer behind everything. The planet is a single element moved
+ * along one path, so the five stops read as one camera move rather than five
+ * pictures. */
+.scene {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* Characters, not dots: the planet is drawn from an alphabet, and a sky of
+ * round pixels beside it read as two unrelated pictures. */
+.starfield span {
+  position: absolute;
+  font-family: var(--mono);
+  line-height: 1;
+  color: #cbd6e2;
+  user-select: none;
+  animation: twinkle 5s ease-in-out infinite;
+}
+/* Each star keeps its own brightness through the cycle. The first version
+ * set opacity inline and let the keyframes overwrite it, so every star
+ * pulsed between the same two values and the sky read as one flat blink. */
+@keyframes twinkle {
+  0%,
+  100% {
+    opacity: var(--o, 0.3);
+  }
+  50% {
+    opacity: calc(var(--o, 0.3) * 0.22);
+  }
+}
+
+/* The far field fades up as the camera pulls back — more sky, less ground. */
+.starfield.deep {
+  opacity: calc(0.25 + var(--p, 0) * 0.75);
+}
+
+/* The box comes from `cameraAt()` as inline left/top/width/height; CSS only
+ * paints it. `left`/`top` address the globe's centre-x and top edge, so the
+ * horizon sits exactly where the path says — under the headline in the hero. */
+.globe,
+.horizon {
+  position: absolute;
+  transform: translateX(-50%);
+  will-change: left, top, width, height;
+}
+
+/*
+ * Two different shots, not two drawings of one thing: the hero stands on the
+ * ground and sees a rim, and from the first stop on you are far enough out
+ * for a globe. Rendering the ASCII sphere at the hero's 210vh would have
+ * meant a handful of glyphs the size of the headline.
+ */
+.horizon {
+  border-radius: 50%;
+  background: radial-gradient(circle at 62% 22%, #10171f 0%, #0a0e13 52%, #06080b 100%);
+  box-shadow:
+    0 -1px 0 0 rgba(111, 179, 224, 0.5),
+    0 -30px 80px -26px rgba(111, 179, 224, 0.2);
+  transition: opacity 0.5s ease;
+}
+.globe {
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+.site:not([data-stage="0"]) .globe {
+  opacity: 1;
+}
+.site:not([data-stage="0"]) .horizon {
+  opacity: 0;
+}
+
+/*
+ * Two character layers, exactly overlapping: each blanks what the other
+ * draws, so land and water can take different colours out of one grid. A
+ * shaded circle kept landing in the gap between "a real planet" and "a
+ * deliberate mark"; characters are unambiguously the second, and they are
+ * the vocabulary the rest of the page already speaks.
+ */
+/* Sized by its own text and centred, never constrained to the box: a `<pre>`
+ * pinned to `inset: 0` is a hair narrower than 44 characters, and the browser
+ * answers that with scrollbars. */
+.globe-layer {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-family: var(--mono);
+  letter-spacing: 0;
+  white-space: pre;
+  user-select: none;
+}
+/*
+ * Both layers sit well below the markers on top of them. The first pass gave
+ * land a halo and most of the ink on the page; the agents — the only thing
+ * here carrying meaning — disappeared into their own planet.
+ */
+.globe-layer.sea {
+  color: rgba(111, 179, 224, 0.17);
+}
+.globe-layer.land {
+  color: rgba(150, 187, 214, 0.42);
+}
+
+.globe-links {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  opacity: 0;
+  transition: opacity 0.55s ease;
+}
+.fleet-dots {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.55s ease;
+}
+/* The globe turns from the first stop on; the links only while a run is
+ * walking it. Container-level gating, so it multiplies with the per-dot
+ * opacity the animation loop writes for the far side of the planet. */
+.site[data-stage="1"] .fleet-dots,
+.site[data-stage="2"] .fleet-dots,
+.site[data-stage="3"] .fleet-dots {
+  opacity: 1;
+}
+.site[data-stage="2"] .globe-links {
+  opacity: 1;
+}
+
+/* Stages: all drawn, one lit. The overlays sit in the planet's frame, so a
+ * dot at "Tokyo" stays at Tokyo while the camera moves. */
+.stage {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.55s ease;
+}
+
+/* The copy owns the left half on every stop, so anything the scene draws for
+ * itself is held to the right of it — overlapping the two was the whole
+ * problem with laying the scene out centred. */
+.panel-right {
+  position: absolute;
+  top: 50%;
+  right: 4vw;
+  width: min(46vw, 620px);
+  transform: translateY(-50%);
+}
+.stage-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 78vh;
+}
+.loop {
+  stroke-dasharray: 5 4;
+  animation: crawl 1.6s linear infinite;
+}
+@keyframes crawl {
+  to {
+    stroke-dashoffset: -18;
+  }
+}
+.site[data-stage="3"] .s-trace,
+.site[data-stage="4"] .s-fleet {
+  opacity: 1;
+}
+
+.agent {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 999px;
+  background: #cfe6f7;
+  box-shadow:
+    0 0 0 2px rgba(7, 9, 12, 0.55),
+    0 0 14px 2px rgba(111, 179, 224, 0.75);
+}
+/* Connect: each on its own rhythm — agents that know nothing of each other. */
+.agent.flicker {
+  animation: flicker 2.6s ease-in-out infinite;
+}
+@keyframes flicker {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+/* Compose: the same dots, now lighting in turn — one run walking the fleet. */
+/* The relay. Its period is set on the element to the number of hops, so the
+ * last agent never fires in step with the first — which is exactly what a
+ * fixed 4s cycle did to a five-agent chain, collapsing the order. */
+.agent.chase {
+  animation: chase linear infinite;
+}
+@keyframes chase {
+  0%,
+  12% {
+    opacity: 1;
+    transform: scale(1.7);
+  }
+  26%,
+  100% {
+    opacity: 0.2;
+    transform: scale(1);
+  }
+}
+
+/*
+ * A hairline of moving dashes rather than a drawn-on solid. The viewBox is
+ * 100 units across and paints around 600px, so the old `stroke-width: 1.3`
+ * arrived eight pixels thick — a pipe between the agents instead of a signal.
+ * `non-scaling-stroke` puts the width back in screen pixels.
+ */
+.link {
+  stroke: var(--accent);
+  stroke-width: 1.1;
+  vector-effect: non-scaling-stroke;
+  fill: none;
+  stroke-dasharray: 3 4;
+  stroke-linecap: round;
+  /* Two clocks: the dashes always drift, and `relay` brings each link up as
+   * the run reaches it. Durations and delays are set per link. */
+  animation:
+    flow linear infinite,
+    relay linear infinite;
+}
+@keyframes relay {
+  0%,
+  10% {
+    opacity: 0.95;
+  }
+  30%,
+  100% {
+    opacity: 0.18;
+  }
+}
+@keyframes flow {
+  to {
+    /* One dash + one gap, so the pattern repeats seamlessly. */
+    stroke-dashoffset: -7;
+  }
+}
+
+/*
+ * Drawn, like the planet, from characters. Stroked rectangles were the one
+ * thing left in the scene speaking a different language, and at the end of a
+ * page made of type they read as a diagram dropped into a photograph.
+ */
+.formation {
+  position: relative;
+  height: 40vh;
+  min-height: 260px;
+}
+.craft-glyph {
+  position: absolute;
+  font-family: var(--mono);
+  font-size: clamp(15px, 1.9vw, 24px);
+  letter-spacing: 0.06em;
+  color: rgba(163, 205, 232, 0.72);
+  transform: translate(-50%, -50%);
+  user-select: none;
+  animation: bob 6s ease-in-out infinite;
+}
+.craft-glyph.empty {
+  color: rgba(148, 160, 174, 0.42);
+}
+.formation-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dim);
+}
+/*
+ * `transform` in a keyframe replaces the property outright, so the centring
+ * from `.craft-glyph` has to be repeated in every frame. Left out, each craft
+ * hangs half its own size down and to the right of the point it was placed at
+ * — which is how the last one came to sit on its own label.
+ */
+@keyframes bob {
+  0%,
+  100% {
+    transform: translate(-50%, -50%) translateY(0);
+  }
+  50% {
+    transform: translate(-50%, -50%) translateY(-7px);
+  }
+}
+
+/* Anyone who has asked for less movement gets the globe, held still. */
+@media (prefers-reduced-motion: reduce) {
+  .site .starfield span,
+  .site .agent,
+  .site .link,
+  .site .craft-glyph {
+    animation: none;
+  }
+  /* The globe's own loop checks this too and simply never starts. */
+  /* The globe's box is inline, so there is no transform to unwind here —
+   * holding the stage transitions still is enough. */
+  .site .stage {
+    transition: none;
+  }
+}
+
+/* ----------------------------------------------------------- the content */
+
+.site-body {
+  position: relative;
+  z-index: 1;
+}
+
+.site-nav {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 22px 40px;
+}
+.site-nav .wordmark {
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 600;
+}
+.site-nav .links {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  font-size: 13.5px;
+}
+/* Same reason as the buttons: `.site a` would otherwise paint the whole nav
+ * accent-blue, and a nav where every item shouts leaves the one that matters
+ * — the filled Start a run — with nothing to stand out against. */
+.site .links a:not(.site-cta) {
+  color: var(--muted);
+}
+.site .links a:not(.site-cta):hover {
+  color: var(--ink);
+}
+
+/*
+ * Scoped under `.site` on purpose, not for tidiness: every button here is an
+ * <a>, and `.site a { color: var(--accent) }` above is one class plus one
+ * element — which out-specifies a bare `.site-cta`. Written unscoped, the
+ * filled button took the link colour and its label vanished into its own
+ * accent background. Two classes beat a class and an element, so the scope
+ * is what makes these rules win.
+ */
+.site .site-cta {
+  background: var(--accent);
+  color: var(--ground);
+  font-weight: 600;
+  font-size: 13px;
+  padding: 7px 14px;
+  border-radius: 6px;
+}
+.site .site-cta:hover {
+  color: var(--ground);
+  background: #8cc3e8;
+}
+.site .site-cta.big {
+  font-size: 15px;
+  padding: 13px 26px;
+}
+.site .site-ghost {
+  border: 1px solid #3a434e;
+  color: var(--ink);
+  font-size: 15px;
+  padding: 12px 24px;
+  border-radius: 6px;
+}
+.site .site-ghost:hover {
+  color: var(--ink);
+  border-color: var(--muted);
+}
+
+/* Each stop is a screenful: the scene gets room to change between them. */
+/* 86vh rather than a full screen: the copy still gets a stop of its own, but
+ * the camera arrives at the next mark noticeably sooner. */
+.stop {
+  min-height: 86vh;
+  display: flex;
+  align-items: center;
+  padding: 80px 40px;
+}
+.stop > div {
+  max-width: 1180px;
+  margin: 0 auto;
+  width: 100%;
+}
+/* Half the frame, so the scene has the other half to itself. */
+.stop:not(.centred) > div > * {
+  max-width: min(48vw, 560px);
+}
+.stop.centred {
+  justify-content: center;
+  text-align: center;
+}
+/*
+ * The hero's copy sits high: the horizon belongs under the headline, and
+ * vertically centred text left no room for it without overlapping.
+ *
+ * 88vh, not a full screen, so the next stop's eyebrow clears the fold. A page
+ * whose whole idea lives in the scroll has to say so, and content showing
+ * under the fold says it without spending a line of copy on "scroll ↓".
+ */
+.stop.hero {
+  min-height: 88vh;
+  align-items: flex-start;
+  padding-top: 12vh;
+}
+
+/*
+ * Top-aligned rather than centred, which is what actually makes the peek
+ * work: centred copy floats to a different height in every stop depending on
+ * how long it is, so the first line after the hero sat a quarter of a screen
+ * down and nothing showed. It also steadies the rhythm — every stop now opens
+ * at the same height.
+ */
+.stop:not(.centred) {
+  align-items: flex-start;
+  padding-top: 64px;
+}
+.stop.centred > div {
+  max-width: 840px;
+}
+
+.site .eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 14px;
+}
+.site .eyebrow.quiet {
+  color: var(--muted);
+  letter-spacing: 0.18em;
+  margin-bottom: 30px;
+}
+
+.wordmark-hero {
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: clamp(48px, 7.2vw, 100px);
+  line-height: 0.98;
+  letter-spacing: -0.045em;
+  margin: 0 0 28px;
+}
+.wordmark-hero .run {
+  color: var(--accent);
+}
+
+.site h2 {
+  font-size: clamp(26px, 3.2vw, 36px);
+  letter-spacing: -0.028em;
+  font-weight: 600;
+  margin: 0 0 14px;
+  max-width: 18ch;
+}
+.stop.centred h2 {
+  max-width: none;
+}
+.site .blurb {
+  font-size: 16.5px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: 0 0 30px;
+  max-width: 52ch;
+}
+.stop.centred .blurb {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.four-words {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--hair);
+  border: 1px solid var(--hair);
+  border-radius: 6px;
+  overflow: hidden;
+  max-width: 680px;
+  margin: 0 auto 36px;
+}
+/* Beats `.site a` (0,1,1) at (0,2,1), so the words keep their own colour
+ * and the whole cell — not just the text — is the target. */
+.site .four-words a {
+  display: block;
+  background: rgba(7, 9, 12, 0.8);
+  padding: 17px 8px;
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  transition: background 0.18s ease, color 0.18s ease;
+}
+.site .four-words a:hover,
+.site .four-words a:focus-visible {
+  background: rgba(111, 179, 224, 0.11);
+  color: #cfe6f6;
+}
+
+/* The stops take focus so a jump moves the caret too. The ring would be a
+ * box round a whole screen; the link it lands before carries its own. */
+.site .stop:focus,
+.site .stop:focus-visible {
+  outline: none;
+}
+
+.site-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.stop.centred .site-actions {
+  justify-content: center;
+}
+
+/* The concrete thing each stop closes on. Translucent so the scene shows
+ * through — the panel is on top of the sky, not cut out of it. */
+.artifact {
+  border: 1px solid var(--hair);
+  border-radius: 6px;
+  background: var(--panel);
+  backdrop-filter: blur(3px);
+  overflow: hidden;
+  max-width: 620px;
+}
+.artifact.wide {
+  max-width: 760px;
+}
+.artifact-head {
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(111, 179, 224, 0.14);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.artifact pre {
+  margin: 0;
+  padding: 16px 18px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.8;
+  color: #b9c3ce;
+  overflow-x: auto;
+}
+.artifact .shell {
+  padding: 16px 18px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.95;
+}
+.artifact .shell .prompt,
+.artifact .shell .arg {
+  color: var(--muted);
+}
+.artifact .shell .ok {
+  color: #63c79a;
+}
+
+.artifact-row {
+  display: grid;
+  gap: 16px;
+  align-items: center;
+  padding: 12px 18px;
+  border-bottom: 1px solid rgba(111, 179, 224, 0.1);
+}
+.artifact-row:last-child {
+  border-bottom: 0;
+}
+.artifact-row.trace {
+  grid-template-columns: 180px 1fr 80px;
+}
+.artifact-row.hop {
+  grid-template-columns: 28px 1fr minmax(0, 200px);
+}
+.artifact-row .k {
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.artifact-row .v {
+  font-size: 13.5px;
+  color: var(--muted);
+}
+.artifact-row .t {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--dim);
+  text-align: right;
+}
+
+.site-foot {
+  border-top: 1px solid rgba(111, 179, 224, 0.12);
+}
+.site-foot > div {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 26px 40px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--dim);
+}
+
+/* Below this the frame is too narrow to hold copy beside the scene, so the
+ * copy takes the full width and the scene drops back to a texture behind it
+ * — readable beats atmospheric. */
+@media (max-width: 1000px) {
+  .stop:not(.centred) > div > * {
+    max-width: none;
+  }
+  .scene {
+    opacity: 0.4;
+  }
+  .panel-right {
+    display: none;
+  }
+}
+
+@media (max-width: 780px) {
+  .four-words {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .stop {
+    padding: 64px 20px;
+  }
+  .site-nav {
+    padding: 18px 20px;
+    gap: 16px;
+  }
+  .site-nav .links {
+    gap: 16px;
+    font-size: 13px;
+  }
+  .artifact-row.trace {
+    grid-template-columns: 130px 1fr 64px;
+  }
+  .artifact-row.hop {
+    grid-template-columns: 24px 1fr;
+  }
+  .artifact-row.hop .t {
+    display: none;
+  }
+}

@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { PRODUCT_NAME } from "../product.ts";
 import { getMe, type Me } from "../api.ts";
 import { signOut } from "../authClient.ts";
 
@@ -29,7 +30,7 @@ export function Shell({ children }: { children: (me: Me) => ReactNode }) {
     <>
       <header className="topbar">
         <Link to="/app" className="brand">
-          agent<span className="dot">·</span>fleet
+          {PRODUCT_NAME}
         </Link>
         <nav className="nav">
           <Link to="/app/agents">Agents</Link>

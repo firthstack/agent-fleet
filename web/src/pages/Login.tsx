@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { PRODUCT_NAME } from "../product.ts";
 import { signIn, signUp } from "../authClient.ts";
 
 type Mode = "sign-in" | "sign-up";
@@ -39,7 +40,7 @@ export function Login() {
     <div className="auth">
       <div className="card">
         <Link to="/" className="brand">
-          agent<span className="dot">·</span>fleet
+          {PRODUCT_NAME}
         </Link>
         <h1>{mode === "sign-up" ? "Create an account" : "Sign in"}</h1>
         <p className="sub">
