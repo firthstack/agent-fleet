@@ -80,63 +80,63 @@
 /* The box comes from `cameraAt()` as inline left/top/width/height; CSS only
  * paints it. `left`/`top` address the globe's centre-x and top edge, so the
  * horizon sits exactly where the path says — under the headline in the hero. */
-.earth,
-.orbit {
+.globe {
   position: absolute;
   transform: translateX(-50%);
   will-change: left, top, width, height;
 }
-.earth {
-  border-radius: 50%;
-  /* Limb shading, not decoration: a sphere lit from up and to the right is
-   * darker at the edge it turns away with, and a flat fill read as a hole
-   * punched in the sky rather than a body in it. */
-  background: radial-gradient(
-    circle at 62% 22%,
-    #10171f 0%,
-    #0a0e13 52%,
-    #06080b 100%
-  );
-  box-shadow:
-    0 -1px 0 0 rgba(111, 179, 224, 0.5),
-    0 -30px 80px -26px rgba(111, 179, 224, 0.2);
+
+/*
+ * Two character layers, exactly overlapping: each blanks what the other
+ * draws, so land and water can take different colours out of one grid. A
+ * shaded circle kept landing in the gap between "a real planet" and "a
+ * deliberate mark"; characters are unambiguously the second, and they are
+ * the vocabulary the rest of the page already speaks.
+ */
+.globe-layer {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  font-family: var(--mono);
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: pre;
+  text-align: center;
+  user-select: none;
+}
+.globe-layer.sea {
+  color: rgba(111, 179, 224, 0.3);
+}
+.globe-layer.land {
+  color: rgba(163, 205, 232, 0.82);
+  text-shadow: 0 0 14px rgba(111, 179, 224, 0.22);
 }
 
-/* The graticule is what makes it a globe. Without it the agents read as dots
- * floating in front of a dark disc; with it they sit on a surface, which is
- * the whole point of putting them there. */
-.globe-wire {
+.globe-links {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   overflow: visible;
+  opacity: 0;
+  transition: opacity 0.55s ease;
 }
-.globe-wire .limb {
-  fill: none;
-  stroke: rgba(111, 179, 224, 0.42);
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-}
-.globe-wire .grid {
-  fill: none;
-  stroke: rgba(111, 179, 224, 0.16);
-  stroke-width: 1;
-  /* Screen-space strokes: the viewBox is 100 units wide but paints at ~600px,
-   * so an ordinary stroke-width of 1 would come out six pixels thick. */
-  vector-effect: non-scaling-stroke;
-}
-/* Everything that rides the globe shares its box, so a dot placed at 24%
- * stays on the same patch of surface however the camera moves. */
-.orbit {
-  pointer-events: none;
-}
-.orbit-svg {
+.fleet-dots {
   position: absolute;
   inset: 0;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
+  opacity: 0;
+  transition: opacity 0.55s ease;
+}
+/* The globe turns from the first stop on; the links only while a run is
+ * walking it. Container-level gating, so it multiplies with the per-dot
+ * opacity the animation loop writes for the far side of the planet. */
+.site[data-stage="1"] .fleet-dots,
+.site[data-stage="2"] .fleet-dots,
+.site[data-stage="3"] .fleet-dots {
+  opacity: 1;
+}
+.site[data-stage="2"] .globe-links {
+  opacity: 1;
 }
 
 /* Stages: all drawn, one lit. The overlays sit in the planet's frame, so a
@@ -173,8 +173,6 @@
     stroke-dashoffset: -18;
   }
 }
-.site[data-stage="1"] .s-connect,
-.site[data-stage="2"] .s-compose,
 .site[data-stage="3"] .s-trace,
 .site[data-stage="4"] .s-fleet {
   opacity: 1;
@@ -263,6 +261,7 @@
   .site .craft {
     animation: none;
   }
+  /* The globe's own loop checks this too and simply never starts. */
   /* The globe's box is inline, so there is no transform to unwind here —
    * holding the stage transitions still is enough. */
   .site .stage {

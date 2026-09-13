@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { AsciiGlobe } from "../components/AsciiGlobe.tsx";
 import { cameraAt, progressOf, stageFor } from "../landingCamera.ts";
 import "../landing.css";
 
@@ -16,22 +17,6 @@ import "../landing.css";
  * thing (the curl, the definition, the timeline, the four hops), so a
  * developer gets proof and everyone else gets the picture first.
  */
-
-/**
- * Where the agents sit, as a percentage of the globe's own box — so they ride
- * it as the camera moves and shrink with it, instead of being pinned to the
- * viewport and sliding off the surface.
- */
-const AGENTS = [
-  { x: 24, y: 30, name: "dev-agent" },
-  { x: 40, y: 17, name: "review-agent" },
-  { x: 61, y: 18, name: "deploy-agent" },
-  { x: 76, y: 32, name: "ops-agent" },
-  { x: 50, y: 11, name: "your-agent" },
-];
-
-/** The order a run walks them in — the `chase` on the compose stop. */
-const ORDER = [0, 1, 2, 3, 4];
 
 const HOPS = [
   { n: "1", what: "your workflow asks for a step", t: "message/send" },
@@ -176,75 +161,7 @@ export function Landing() {
           ))}
         </div>
 
-        <div className="earth" style={globe}>
-          <svg viewBox="0 0 100 100" className="globe-wire" aria-hidden="true">
-            {/* the limb */}
-            <circle cx="50" cy="50" r="49.4" className="limb" />
-            {/* meridians — an orthographic sphere, so longitude lines narrow
-                toward the edges and the centre one is straight */}
-            <g className="grid">
-                            <ellipse cx="50" cy="50" rx="40" ry="49.4" />
-              <ellipse cx="50" cy="50" rx="26" ry="49.4" />
-              <ellipse cx="50" cy="50" rx="12" ry="49.4" />
-              <line x1="50" y1="0.6" x2="50" y2="99.4" />
-            </g>
-            {/* parallels — tilted a little so the globe reads as a ball
-                rather than a disc with stripes */}
-            <g className="grid">
-                            <ellipse cx="50" cy="7.2" rx="24.7" ry="4.0" />
-              <ellipse cx="50" cy="25.3" rx="42.8" ry="6.8" />
-              <ellipse cx="50" cy="50.0" rx="49.4" ry="7.9" />
-              <ellipse cx="50" cy="74.7" rx="42.8" ry="6.8" />
-              <ellipse cx="50" cy="92.8" rx="24.7" ry="4.0" />
-            </g>
-          </svg>
-        </div>
-
-        {/* 01 — the agents appear, each on its own rhythm */}
-        <div className="stage s-connect">
-          <div className="orbit" style={globe}>
-            {AGENTS.map((a, i) => (
-              <span
-                key={a.name}
-                className="agent flicker"
-                style={{ left: `${a.x}%`, top: `${a.y}%`, animationDelay: `${i * 0.7}s` }}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* 02 — the same dots, lighting in a fixed order, links drawn between */}
-        <div className="stage s-compose">
-          <div className="orbit" style={globe}>
-            <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="orbit-svg">
-              {ORDER.slice(0, -1).map((from, i) => {
-                const a = AGENTS[from];
-                const b = AGENTS[ORDER[i + 1]];
-                return (
-                  <path
-                    key={`l${i}`}
-                    className="link"
-                    d={`M${a.x} ${a.y} Q${(a.x + b.x) / 2} ${Math.min(a.y, b.y) - 9} ${b.x} ${b.y}`}
-                    // Negative delays start each link partway through the
-                    // cycle, so the dashes read as one signal travelling the
-                    // chain rather than four lines blinking together.
-                    style={{ animationDelay: `${-i * 0.4}s` }}
-                  />
-                );
-              })}
-            </svg>
-            {ORDER.map((idx, i) => {
-              const a = AGENTS[idx];
-              return (
-                <span
-                  key={`c${a.name}`}
-                  className="agent chase"
-                  style={{ left: `${a.x}%`, top: `${a.y}%`, animationDelay: `${i}s` }}
-                />
-              );
-            })}
-          </div>
-        </div>
+        <AsciiGlobe style={globe} stage={stage} />
 
         {/* 03 — the state graph laid out in time, in the freed right half */}
         <div className="stage s-trace">

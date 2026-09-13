@@ -167,7 +167,7 @@ describe("landing page link colours", () => {
 describe("landing scene stroke widths", () => {
   const css = readFileSync(new URL("../../web/src/landing.css", import.meta.url), "utf8");
 
-  const scaled = [".link", ".globe-wire .limb", ".globe-wire .grid"];
+  const scaled = [".link"];
 
   it.each(scaled)("keeps %s in screen pixels, not viewBox units", (selector) => {
     const rule = css.match(
