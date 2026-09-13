@@ -21,8 +21,9 @@
  */
 export const GRID = { cols: 44, rows: 26 } as const;
 
-/** Monospace advance width, as a fraction of the font size. */
-const CHAR_ASPECT = 0.6;
+/** Monospace advance width, as a fraction of the font size. IBM Plex Mono —
+ *  loaded in index.html — is exactly 0.6, as are most fallbacks. */
+export const CHAR_ASPECT = 0.6;
 
 /** Brightness ramp, darkest first. Classic ASCII shading. */
 /*

@@ -51,8 +51,10 @@
   border: 0;
   border-radius: 0;
   overflow: visible;
-  font-size: inherit;
-  line-height: inherit;
+  /* Deliberately not font-size or line-height: every `pre` under `.site` sets
+   * its own, and a reset here out-specifies a plain class like
+   * `.globe-layer` — which is how 26 rows at line-height 1.6 turned the
+   * globe into a standing ellipse. */
 }
 
 .site a {
@@ -148,7 +150,6 @@
   top: 50%;
   transform: translate(-50%, -50%);
   font-family: var(--mono);
-  line-height: 1;
   letter-spacing: 0;
   white-space: pre;
   user-select: none;

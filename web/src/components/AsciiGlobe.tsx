@@ -92,14 +92,22 @@ export function AsciiGlobe({ style, stage }: { style: CSSProperties; stage: numb
     return () => window.cancelAnimationFrame(frame.current);
   }, []);
 
-  // The character grid is ROWS tall, so a cell is 1/ROWS of the box and the
-  // glyphs scale with the camera without any transform.
-  const fontSize = `calc(${style.height ?? "0px"} / ${ROWS})`;
+  /*
+   * The cell. Size and line height are one measurement, not two settings:
+   * ROWS lines at line-height 1 have to come to exactly the box's height, or
+   * the sphere stops being round. Inline because a stylesheet rule for bare
+   * `pre` out-ranks a class, and one that set line-height stretched this into
+   * a standing ellipse.
+   */
+  const cell = {
+    fontSize: `calc(${style.height ?? "0px"} / ${ROWS})`,
+    lineHeight: 1,
+  } as const;
 
   return (
     <div className="globe" style={style} aria-hidden="true">
-      <pre ref={sea} className="globe-layer sea" style={{ fontSize }} />
-      <pre ref={land} className="globe-layer land" style={{ fontSize }} />
+      <pre ref={sea} className="globe-layer sea" style={cell} />
+      <pre ref={land} className="globe-layer land" style={cell} />
 
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="globe-links">
         {FLEET.slice(0, -1).map((a, i) => (

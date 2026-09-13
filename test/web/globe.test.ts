@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GRID, isLand, placeOnGlobe, renderGlobe } from "../../web/src/globe";
+import { CHAR_ASPECT, GRID, isLand, placeOnGlobe, renderGlobe } from "../../web/src/globe";
 
 const { cols: COLS, rows: ROWS } = GRID;
 
@@ -135,5 +135,41 @@ describe("placeOnGlobe", () => {
         expect(p.y).toBeLessThanOrEqual(1);
       }
     }
+  });
+});
+
+/**
+ * The grid has to be shaped so the sphere comes out round. Characters are
+ * about 0.6 as wide as they are tall, so COLS × 0.6 has to land on ROWS —
+ * and the two `<pre>` layers have to be laid out at line-height 1 for ROWS
+ * lines to occupy exactly the box's height. Both have been wrong: a grid a
+ * third of a column too narrow, and a stylesheet that stretched the line
+ * height to 1.6 and stood the globe up like a rugby ball.
+ */
+describe("the grid is shaped for a round globe", () => {
+  it("puts as many character widths across as there are rows down", () => {
+    const across = GRID.cols * CHAR_ASPECT;
+    const ratio = across / GRID.rows;
+    expect(ratio).toBeGreaterThan(0.97);
+    expect(ratio).toBeLessThan(1.03);
+  });
+
+  it("draws a disc as tall as it is wide", () => {
+    // Measured off the rendered frame rather than the constants, so this
+    // fails if the projection stops agreeing with the grid.
+    // Both layers: land blanks the sea and vice versa, so either alone
+    // undercounts the silhouette.
+    const f = renderGlobe(GRID.cols, GRID.rows, 0);
+    const land = f.land.split("\n");
+    const sea = f.sea.split("\n");
+    const perRow = land.map(
+      (row, r) => [...row].filter((c, i) => c !== " " || sea[r][i] !== " ").length,
+    );
+    const height = perRow.filter((n) => n > 0).length;
+    const width = Math.max(...perRow);
+    // Widest row is the equator; it spans the same fraction of the grid that
+    // the filled rows do, once the cell aspect is taken out.
+    expect((width * CHAR_ASPECT) / height).toBeGreaterThan(0.9);
+    expect((width * CHAR_ASPECT) / height).toBeLessThan(1.1);
   });
 });
