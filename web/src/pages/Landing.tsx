@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { Link } from "react-router-dom";
 import { AsciiGlobe } from "../components/AsciiGlobe.tsx";
 import { cameraAt, progressOf, stageFor } from "../landingCamera.ts";
+import { PRODUCT_NAME } from "../product.ts";
 import { BOX, LOOP, TIMELINE, VIEWBOX, boxY, loopLabelY, loopPath } from "../traceGraph.ts";
 import "../landing.css";
 
@@ -296,7 +297,7 @@ export function Landing() {
 
       <div className="site-body">
         <nav className="site-nav">
-          <span className="wordmark">Fleet</span>
+          <span className="wordmark">{PRODUCT_NAME}</span>
           <span className="spacer" />
           <div className="links">
             <a href="https://github.com/firthstack/agent-fleet">Docs</a>

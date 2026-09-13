@@ -186,9 +186,6 @@ code,
 .brand:hover {
   text-decoration: none;
 }
-.brand .dot {
-  color: var(--accent);
-}
 .spacer {
   flex: 1;
 }
