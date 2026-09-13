@@ -204,50 +204,6 @@ code,
   padding: 0 24px;
 }
 
-/* ----------------------------------------------------------------- landing */
-
-.hero {
-  padding: 96px 0 72px;
-}
-.hero h1 {
-  font-size: clamp(34px, 5.2vw, 52px);
-  line-height: 1.08;
-  letter-spacing: -0.025em;
-  font-weight: 600;
-  margin: 0 0 20px;
-  max-width: 18ch;
-  text-wrap: balance;
-}
-.hero p {
-  font-size: 18px;
-  color: var(--muted);
-  max-width: 58ch;
-  margin: 0 0 32px;
-}
-.hero .cta {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.eyebrow {
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--accent);
-  margin: 0 0 16px;
-}
-
-.points {
-  display: grid;
-  gap: 1px;
-  background: var(--rule);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  overflow: hidden;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-}
 .point {
   background: var(--surface);
   padding: 22px 24px;
@@ -266,62 +222,11 @@ code,
   color: var(--muted);
 }
 
-.section {
-  padding: 64px 0;
-  border-top: 1px solid var(--rule);
-}
-.section h2 {
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.012em;
-  margin: 0 0 10px;
-}
-.section > p {
-  color: var(--muted);
-  max-width: 62ch;
-  margin: 0 0 26px;
-}
-
-pre {
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  padding: 16px 18px;
-  overflow-x: auto;
-  font-family: var(--mono);
-  font-size: 12.5px;
-  line-height: 1.6;
-  margin: 0;
-}
 pre .k {
   color: var(--accent);
 }
 pre .c {
   color: var(--muted);
-}
-
-.chain {
-  display: grid;
-  gap: 10px;
-  font-family: var(--mono);
-  font-size: 13px;
-}
-.chain-row {
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: baseline;
-  padding: 11px 14px;
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-}
-.chain-row .n {
-  color: var(--accent);
-}
-.chain-row .t {
-  color: var(--muted);
-  font-size: 12px;
 }
 
 footer.site {
@@ -421,18 +326,6 @@ footer.site {
   color: var(--muted);
   margin: 0;
   font-size: 14px;
-}
-
-.soon {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--muted);
-  border: 1px solid var(--rule-strong);
-  border-radius: 999px;
-  padding: 1px 8px;
-  /* Sits inline in a sentence, so keep it off the text baseline's descent. */
-  margin-right: 4px;
-  white-space: nowrap;
 }
 
 .center-note {
@@ -644,8 +537,28 @@ textarea:focus {
   border-radius: var(--radius);
   padding: 10px 12px;
   margin: 8px 0 0;
-  max-height: 220px;
+  max-height: 360px;
   overflow: auto;
+  /* Long values wrap instead of running off the side. A horizontal scrollbar
+   * on a JSON block hides the ends of exactly the lines worth reading. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule) transparent;
+}
+.schema::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.schema::-webkit-scrollbar-thumb {
+  background: var(--rule);
+  border-radius: 999px;
+  /* Inset, so the thumb reads as part of the block rather than a bar bolted
+   * to its edge. */
+  border: 3px solid var(--surface-2);
+}
+.schema::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .pill.live {
@@ -707,18 +620,6 @@ textarea:focus {
 .gap.slow {
   color: var(--warn);
   font-weight: 600;
-}
-
-.chain {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 10px;
-}
-.chain-row {
-  border-left: 2px solid var(--rule);
-  padding: 0 0 4px 12px;
 }
 
 /* Code left, graph right — and stacked on a narrow screen, where a
@@ -1008,4 +909,159 @@ textarea.code::-webkit-scrollbar-thumb:hover,
   .run-note {
     display: none;
   }
+}
+
+/* ------------------------------------------------------- a run, as a rail */
+
+/*
+ * Newest at the top, where the run began at the bottom — the order you read
+ * a log in, and the order the question "what just happened" is asked in.
+ *
+ * This replaces a list of rows that carried the raw payload under each one.
+ * Two generations of `.chain` rules had stacked up in this file and the
+ * older one's `grid-template-columns: 22px …` was still winning, which is
+ * how every state name came to be clipped to five letters.
+ */
+.rail {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.rail-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  gap: 0 12px;
+  padding: 0 0 20px;
+  align-items: start;
+}
+.rail-step:last-child {
+  padding-bottom: 0;
+}
+/* The segment of rail below this node, down to the next one. The run's
+ * beginning is the last row, and has nothing below it to join. */
+.rail-step::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 20px;
+  bottom: 0;
+  width: 1px;
+  background: var(--rule);
+}
+.rail-step:last-child::before {
+  display: none;
+}
+.rail-node {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 20px;
+  text-align: center;
+  color: var(--muted);
+  /* Sits on top of the rail rather than being crossed by it. */
+  position: relative;
+  z-index: 1;
+  background: var(--surface);
+}
+.rail-step.bad .rail-node {
+  color: var(--bad);
+}
+.rail-step.ok .rail-node {
+  color: var(--ok);
+}
+.rail-step.warn .rail-node {
+  color: var(--warn);
+}
+.rail-step.start .rail-node,
+.rail-step.step .rail-node {
+  color: var(--accent);
+}
+.rail-body {
+  min-width: 0;
+}
+.rail-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 20px;
+}
+.rail-head .spacer {
+  flex: 1;
+}
+.rail-state {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink);
+  /* The name is the row's subject: it wraps rather than being cut off. */
+  overflow-wrap: anywhere;
+}
+.rail-step.bad .rail-state {
+  color: var(--bad);
+  font-weight: 600;
+}
+.rail-note {
+  margin: 3px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.rail-step.bad .rail-note {
+  color: var(--ink);
+}
+.rail-more {
+  margin-top: 6px;
+}
+.rail-more summary {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.rail-more summary:hover {
+  color: var(--accent);
+}
+/* Aligned to the foot of the row, beside the segment it measures. */
+.rail-gap {
+  align-self: end;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.rail-gap.slow {
+  color: var(--warn);
+}
+
+/* The verdict: one line, above everything, saying how it went. */
+.verdict {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 10px 0 0;
+  font-size: 14px;
+  color: var(--ink);
+}
+.verdict span {
+  font-family: var(--mono);
+}
+.verdict.bad {
+  color: var(--bad);
+}
+.verdict.ok {
+  color: var(--ok);
+}
+.verdict.warn {
+  color: var(--warn);
+}
+.verdict.live,
+.verdict.step,
+.verdict.start,
+.verdict.wait {
+  color: var(--muted);
+}
+
+/* Stacked full-width panels, where these two used to share a row and spend
+ * their width on scrollbars. */
+.panel.stack {
+  margin-top: 16px;
 }
