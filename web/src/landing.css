@@ -6,11 +6,15 @@
  * light variant of it would be a different page, not a lighter one. So the
  * colours here are literal, scoped under `.site`, and never read a token.
  *
- * One scroll progress variable, `--p` (0 → 1 across the page), drives the
- * camera; `data-stage` picks which overlay is lit. Both are written by
- * Landing.tsx on a rAF-throttled scroll. Scroll-linked CSS timelines would
- * be tidier, but support is still uneven enough that the page would simply
- * not move for a chunk of visitors.
+ * The camera is computed in `landingCamera.ts` and arrives as inline
+ * left/top/width/height on the globe — the path crosses the frame and doubles
+ * back, which interpolated custom properties could not express readably.
+ * `--p` is left for the one thing that is a straight ramp (the far starfield),
+ * and `data-stage` picks which overlay is lit.
+ *
+ * A rAF-throttled scroll listener rather than a scroll-linked CSS timeline:
+ * support is still uneven enough that the page would simply not move for a
+ * share of visitors.
  */
 
 .site {
@@ -41,9 +45,9 @@
 
 /* ------------------------------------------------------------- the scene */
 
-/* One pinned layer behind everything. The planet is a single element whose
- * scale and offset are keyframed by `--p`, so the five stops read as one
- * camera move rather than five pictures. */
+/* One pinned layer behind everything. The planet is a single element moved
+ * along one path, so the five stops read as one camera move rather than five
+ * pictures. */
 .scene {
   position: fixed;
   inset: 0;
@@ -73,24 +77,33 @@
   opacity: calc(0.25 + var(--p, 0) * 0.75);
 }
 
-.earth {
+/* The box comes from `cameraAt()` as inline left/top/width/height; CSS only
+ * paints it. `left`/`top` address the globe's centre-x and top edge, so the
+ * horizon sits exactly where the path says — under the headline in the hero. */
+.earth,
+.orbit {
   position: absolute;
-  left: 50%;
-  bottom: 0;
-  width: 1500px;
-  height: 1500px;
+  transform: translateX(-50%);
+  will-change: left, top, width, height;
+}
+.earth {
   border-radius: 50%;
   background: #0a0e13;
   box-shadow:
     0 -1px 0 0 rgba(111, 179, 224, 0.5),
     0 -30px 80px -26px rgba(111, 179, 224, 0.2);
-  /* scale and lift are one continuous function of scroll: a 2× globe sunk
-   * below the fold at the top, a small one high in frame at the bottom. */
-  transform: translateX(-50%)
-    translateY(calc(880px - var(--p, 0) * 300px))
-    scale(calc(2 - var(--p, 0) * 1.8));
-  transform-origin: 50% 0;
-  will-change: transform;
+}
+/* Everything that rides the globe shares its box, so a dot placed at 24%
+ * stays on the same patch of surface however the camera moves. */
+.orbit {
+  pointer-events: none;
+}
+.orbit-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
 }
 
 /* Stages: all drawn, one lit. The overlays sit in the planet's frame, so a
@@ -100,6 +113,32 @@
   inset: 0;
   opacity: 0;
   transition: opacity 0.55s ease;
+}
+
+/* The copy owns the left half on every stop, so anything the scene draws for
+ * itself is held to the right of it — overlapping the two was the whole
+ * problem with laying the scene out centred. */
+.panel-right {
+  position: absolute;
+  top: 50%;
+  right: 4vw;
+  width: min(46vw, 620px);
+  transform: translateY(-50%);
+}
+.stage-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 78vh;
+}
+.loop {
+  stroke-dasharray: 5 4;
+  animation: crawl 1.6s linear infinite;
+}
+@keyframes crawl {
+  to {
+    stroke-dashoffset: -18;
+  }
 }
 .site[data-stage="1"] .s-connect,
 .site[data-stage="2"] .s-compose,
@@ -185,9 +224,8 @@
   .site .craft {
     animation: none;
   }
-  .site .earth {
-    transform: translateX(-50%) translateY(560px) scale(1);
-  }
+  /* The globe's box is inline, so there is no transform to unwind here —
+   * holding the stage transitions still is enough. */
   .site .stage {
     transition: none;
   }
@@ -250,8 +288,10 @@
 }
 
 /* Each stop is a screenful: the scene gets room to change between them. */
+/* 86vh rather than a full screen: the copy still gets a stop of its own, but
+ * the camera arrives at the next mark noticeably sooner. */
 .stop {
-  min-height: 100vh;
+  min-height: 86vh;
   display: flex;
   align-items: center;
   padding: 80px 40px;
@@ -261,9 +301,19 @@
   margin: 0 auto;
   width: 100%;
 }
+/* Half the frame, so the scene has the other half to itself. */
+.stop:not(.centred) > div > * {
+  max-width: min(48vw, 560px);
+}
 .stop.centred {
   justify-content: center;
   text-align: center;
+}
+/* The hero's copy sits high: the horizon belongs under the headline, and
+ * vertically centred text left no room for it without overlapping. */
+.stop.hero {
+  align-items: flex-start;
+  padding-top: 12vh;
 }
 .stop.centred > div {
   max-width: 840px;
@@ -440,6 +490,21 @@
   font-family: var(--mono);
   font-size: 11.5px;
   color: var(--dim);
+}
+
+/* Below this the frame is too narrow to hold copy beside the scene, so the
+ * copy takes the full width and the scene drops back to a texture behind it
+ * — readable beats atmospheric. */
+@media (max-width: 1000px) {
+  .stop:not(.centred) > div > * {
+    max-width: none;
+  }
+  .scene {
+    opacity: 0.4;
+  }
+  .panel-right {
+    display: none;
+  }
 }
 
 @media (max-width: 780px) {

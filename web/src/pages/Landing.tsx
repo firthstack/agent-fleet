@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { progressOf, stageFor } from "../landingCamera.ts";
+import { cameraAt, progressOf, stageFor } from "../landingCamera.ts";
 import "../landing.css";
 
 /**
@@ -17,14 +17,17 @@ import "../landing.css";
  * developer gets proof and everyone else gets the picture first.
  */
 
-/** Where the agents sit on the globe, in scene coordinates. Shared by every
- *  stage so a dot stays put while the camera pulls back. */
+/**
+ * Where the agents sit, as a percentage of the globe's own box — so they ride
+ * it as the camera moves and shrink with it, instead of being pinned to the
+ * viewport and sliding off the surface.
+ */
 const AGENTS = [
-  { dx: -190, dy: -46, name: "dev-agent" },
-  { dx: -72, dy: -96, name: "review-agent" },
-  { dx: 68, dy: -92, name: "deploy-agent" },
-  { dx: 186, dy: -40, name: "ops-agent" },
-  { dx: -8, dy: -124, name: "your-agent" },
+  { x: 24, y: 30, name: "dev-agent" },
+  { x: 40, y: 17, name: "review-agent" },
+  { x: 61, y: 18, name: "deploy-agent" },
+  { x: 76, y: 32, name: "ops-agent" },
+  { x: 50, y: 11, name: "your-agent" },
 ];
 
 /** The order a run walks them in — the `chase` on the compose stop. */
@@ -39,6 +42,15 @@ const HOPS = [
     t: "/a2a/callbacks/…",
   },
   { n: "4", what: "the state graph moves on, and dispatches the next", t: "no connection held" },
+];
+
+/** The same run the copy describes, as the graph draws it. */
+const TIMELINE = [
+  { state: "developing", gap: "4.1h", slow: true, done: false },
+  { state: "pr_opened", gap: "3s", slow: false, done: false },
+  { state: "reviewing", gap: "3.2h", slow: true, done: false },
+  { state: "requesting_merge", gap: "11s", slow: false, done: false },
+  { state: "completed", gap: "", slow: false, done: true },
 ];
 
 const TRACE = [
@@ -114,6 +126,15 @@ function useScrollCamera(stops: number) {
 
 export function Landing() {
   const { progress, stage } = useScrollCamera(4);
+  const cam = cameraAt(progress);
+  // The globe and everything riding it share one box, so a dot placed at 24%
+  // stays at 24% of the globe whatever the camera is doing.
+  const globe = {
+    left: `${cam.x}vw`,
+    top: `${cam.y}vh`,
+    width: `${cam.size}vh`,
+    height: `${cam.size}vh`,
+  } as const;
   const near = useMemo(() => stars(11, 70), []);
   const far = useMemo(() => stars(97, 110), []);
 
@@ -155,119 +176,116 @@ export function Landing() {
           ))}
         </div>
 
-        <div className="earth" />
+        <div className="earth" style={globe} />
 
         {/* 01 — the agents appear, each on its own rhythm */}
         <div className="stage s-connect">
-          {AGENTS.map((a, i) => (
-            <span
-              key={a.name}
-              className="agent flicker"
-              style={{
-                left: `calc(50% + ${a.dx}px)`,
-                top: `calc(50% + ${a.dy}px)`,
-                animationDelay: `${i * 0.7}s`,
-              }}
-            />
-          ))}
+          <div className="orbit" style={globe}>
+            {AGENTS.map((a, i) => (
+              <span
+                key={a.name}
+                className="agent flicker"
+                style={{ left: `${a.x}%`, top: `${a.y}%`, animationDelay: `${i * 0.7}s` }}
+              />
+            ))}
+          </div>
         </div>
 
         {/* 02 — the same dots, lighting in a fixed order, links drawn between */}
         <div className="stage s-compose">
-          <svg viewBox="0 0 1440 900" preserveAspectRatio="none" style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
-            {ORDER.slice(0, -1).map((from, i) => {
-              const a = AGENTS[from];
-              const b = AGENTS[ORDER[i + 1]];
+          <div className="orbit" style={globe}>
+            <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="orbit-svg">
+              {ORDER.slice(0, -1).map((from, i) => {
+                const a = AGENTS[from];
+                const b = AGENTS[ORDER[i + 1]];
+                return (
+                  <path
+                    key={`l${i}`}
+                    className="link"
+                    d={`M${a.x} ${a.y} Q${(a.x + b.x) / 2} ${Math.min(a.y, b.y) - 9} ${b.x} ${b.y}`}
+                    style={{ animationDelay: `${i}s` }}
+                  />
+                );
+              })}
+            </svg>
+            {ORDER.map((idx, i) => {
+              const a = AGENTS[idx];
               return (
-                <path
-                  key={`l${i}`}
-                  className="link"
-                  d={`M${720 + a.dx} ${450 + a.dy} Q${720 + (a.dx + b.dx) / 2} ${
-                    450 + Math.min(a.dy, b.dy) - 70
-                  } ${720 + b.dx} ${450 + b.dy}`}
-                  style={{ animationDelay: `${i}s` }}
+                <span
+                  key={`c${a.name}`}
+                  className="agent chase"
+                  style={{ left: `${a.x}%`, top: `${a.y}%`, animationDelay: `${i}s` }}
                 />
               );
             })}
-          </svg>
-          {ORDER.map((idx, i) => {
-            const a = AGENTS[idx];
-            return (
-              <span
-                key={`c${a.name}`}
-                className="agent chase"
-                style={{
-                  left: `calc(50% + ${a.dx}px)`,
-                  top: `calc(50% + ${a.dy}px)`,
-                  animationDelay: `${i}s`,
-                }}
-              />
-            );
-          })}
+          </div>
         </div>
 
-        {/* 03 — pulled back, one run laid out in time */}
+        {/* 03 — the state graph laid out in time, in the freed right half */}
         <div className="stage s-trace">
-          <svg viewBox="0 0 1440 900" style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
-            <line x1="300" y1="300" x2="1140" y2="300" stroke="rgba(111,179,224,.28)" strokeWidth="1" />
-            {["developing", "pr_opened", "reviewing", "requesting_merge", "completed"].map(
-              (state, i) => {
-                const gaps = ["+4.1h", "+3s", "+3.2h", "+11s", ""];
-                const slow = gaps[i].endsWith("h");
+          <div className="panel-right">
+            <svg viewBox="0 0 460 420" className="stage-svg" aria-hidden="true">
+              <defs>
+                <marker id="tz" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M0,0 L8,4 L0,8 z" fill="#3a434e" />
+                </marker>
+              </defs>
+              {TIMELINE.map((step, i) => {
+                const y = 40 + i * 82;
+                const next = TIMELINE[i + 1];
                 return (
-                  <g key={state}>
-                    <circle cx={300 + i * 210} cy="300" r="4.5" fill="#6fb3e0" />
-                    <text
-                      x={300 + i * 210}
-                      y="282"
-                      textAnchor="middle"
-                      fontFamily="IBM Plex Mono, monospace"
-                      fontSize="11"
-                      fill="#94a0ae"
-                    >
-                      {state}
-                    </text>
-                    <text
-                      x={300 + i * 210}
-                      y="322"
-                      textAnchor="middle"
-                      fontFamily="IBM Plex Mono, monospace"
-                      fontSize="10"
-                      fill={slow ? "#d9ae66" : "#5f6b78"}
-                    >
-                      {gaps[i]}
+                  <g key={step.state}>
+                    {next ? (
+                      <>
+                        <path d={`M150 ${y + 16} V ${y + 66}`} stroke="#3a434e" strokeWidth="1.3" fill="none" markerEnd="url(#tz)" />
+                        <text x="162" y={y + 46} fontFamily="IBM Plex Mono, monospace" fontSize="12" fill={step.slow ? "#d9ae66" : "#5f6b78"}>
+                          {step.gap}
+                        </text>
+                      </>
+                    ) : null}
+                    <rect x="40" y={y} width="220" height="32" rx="6" fill={step.done ? "#0b1a14" : "#0f151c"} stroke={step.done ? "#1b6e4a" : "#3a434e"} />
+                    <text x="150" y={y + 21} textAnchor="middle" fontFamily="IBM Plex Mono, monospace" fontSize="12.5" fill={step.done ? "#63c79a" : "#e3e8ee"}>
+                      {step.state}
                     </text>
                   </g>
                 );
-              },
-            )}
-          </svg>
+              })}
+              {/* the loop back — the reason this is a graph and not a list */}
+              <path className="loop" d="M260 138 H340 V56 H260" stroke="#6fb3e0" strokeWidth="1.4" fill="none" markerEnd="url(#tz)" />
+              <text x="348" y="100" fontFamily="IBM Plex Mono, monospace" fontSize="11" fill="#6fb3e0">
+                request_changes
+              </text>
+            </svg>
+          </div>
         </div>
 
-        {/* 04 — far out, the fleet in formation, one slot still dashed */}
+        {/* 04 — far out, the fleet in formation, held to the right half */}
         <div className="stage s-fleet">
-          <svg viewBox="0 0 1440 900" style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
-            {[0, 1, 2, 3, 4].map((i) => (
-              <g key={i} className="craft" style={{ animationDelay: `${i * 0.8}s` }}>
-                <rect
-                  x={430 + i * 115}
-                  y={300 + (i % 2) * 26}
-                  width="60"
-                  height="24"
-                  rx="4"
-                  fill="#0b1016"
-                  stroke="#6fb3e0"
-                />
+          <div className="panel-right">
+            <svg viewBox="0 0 460 420" className="stage-svg" aria-hidden="true">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <g key={i} className="craft" style={{ animationDelay: `${i * 0.8}s` }}>
+                  <rect
+                    x={60 + (i % 3) * 128}
+                    y={110 + Math.floor(i / 3) * 96 + (i % 2) * 22}
+                    width="92"
+                    height="34"
+                    rx="5"
+                    fill="#0b1016"
+                    stroke="#6fb3e0"
+                  />
+                </g>
+              ))}
+              <g className="craft" style={{ animationDelay: "4s" }}>
+                <rect x="188" y="228" width="92" height="34" rx="5" fill="#0b1016" stroke="#3a434e" strokeDasharray="3 2" />
               </g>
-            ))}
-            <g className="craft" style={{ animationDelay: "4s" }}>
-              <rect x="1005" y="326" width="60" height="24" rx="4" fill="#0b1016" stroke="#3a434e" strokeDasharray="3 2" />
-            </g>
-            <text x="1035" y="372" textAnchor="middle" fontFamily="IBM Plex Mono, monospace" fontSize="10" fill="#5f6b78">
-              + yours
-            </text>
-          </svg>
+              <text x="234" y="284" textAnchor="middle" fontFamily="IBM Plex Mono, monospace" fontSize="12" fill="#5f6b78">
+                + yours
+              </text>
+            </svg>
+          </div>
         </div>
+
       </div>
 
       <div className="site-body">
@@ -284,7 +302,7 @@ export function Landing() {
           </div>
         </nav>
 
-        <section className="stop centred">
+        <section className="stop centred hero">
           <div>
             <p className="eyebrow quiet">multi-tenant A2A gateway</p>
             <div className="wordmark-hero">
