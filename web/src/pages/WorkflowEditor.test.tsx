@@ -19,7 +19,26 @@ vi.mock("../authClient.ts", () => ({
   signOut: vi.fn(),
 }));
 
+import { getWorkflow, type WorkflowDefinition } from "../api.ts";
 import { WorkflowEditor } from "./WorkflowEditor.tsx";
+
+/** A minimal published workflow — the state the main viewing use case
+ *  (watching an existing definition, not authoring one) actually opens on. */
+const publishedDefinition: WorkflowDefinition = {
+  workflow: "demo",
+  version: 1,
+  start: [{ goto: "reviewing" }],
+  states: {
+    reviewing: { status: "active", next: [{ goto: "done" }] },
+    done: { status: "terminal" },
+  },
+};
+
+function validationHeadings() {
+  return screen
+    .queryAllByRole("heading", { level: 2 })
+    .filter((h) => h.textContent?.startsWith("Validation"));
+}
 
 afterEach(cleanup);
 
@@ -56,5 +75,42 @@ describe("WorkflowEditor edit toggle", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /^done$/i }));
     expect(document.querySelector("textarea.code")).toBeNull();
+  });
+
+  it("collapses Publish and Validation on Done, keeps the diagram, and reopening preserves the edited text and format", async () => {
+    vi.mocked(getWorkflow).mockResolvedValueOnce({
+      id: 1,
+      name: "demo",
+      version: 1,
+      definition: publishedDefinition,
+    });
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText("Start a run")).toBeTruthy());
+    expect(document.querySelector(".diagram")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+    expect(screen.getByRole("button", { name: /publish/i })).toBeTruthy();
+    expect(validationHeadings().length).toBe(1);
+    expect(document.querySelector(".diagram")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "YAML" }));
+    expect(screen.getByRole("button", { name: "YAML" }).getAttribute("aria-pressed")).toBe("true");
+
+    const textarea = document.querySelector("textarea.code") as HTMLTextAreaElement;
+    const edited = `${textarea.value}\n# edited while reviewing`;
+    fireEvent.change(textarea, { target: { value: edited } });
+
+    fireEvent.click(screen.getByRole("button", { name: /^done$/i }));
+
+    expect(document.querySelector("textarea.code")).toBeNull();
+    expect(screen.queryByRole("button", { name: /publish/i })).toBeNull();
+    expect(validationHeadings().length).toBe(0);
+    expect(document.querySelector(".diagram")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+    expect((document.querySelector("textarea.code") as HTMLTextAreaElement).value).toBe(edited);
+    expect(screen.getByRole("button", { name: "YAML" }).getAttribute("aria-pressed")).toBe("true");
   });
 });
