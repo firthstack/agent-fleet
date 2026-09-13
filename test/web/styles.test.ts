@@ -157,3 +157,32 @@ describe("landing page link colours", () => {
     expect(beats(".site .links a:not(.site-cta)", linkRule)).toBe(true);
   });
 });
+
+/**
+ * The scene's SVGs use a 100-unit viewBox painted at several hundred pixels,
+ * so every stroke is multiplied by the scale factor. A `stroke-width: 1.3`
+ * that looked reasonable in the markup arrived on screen eight pixels thick —
+ * a pipe between the agents rather than a signal along it.
+ */
+describe("landing scene stroke widths", () => {
+  const css = readFileSync(new URL("../../web/src/landing.css", import.meta.url), "utf8");
+
+  const scaled = [".link", ".globe-wire .limb", ".globe-wire .grid"];
+
+  it.each(scaled)("keeps %s in screen pixels, not viewBox units", (selector) => {
+    const rule = css.match(
+      new RegExp(`${selector.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}\\s*\\{([^}]*)\\}`),
+    );
+    expect(rule, `${selector} rule should exist in landing.css`).not.toBeNull();
+    expect(rule![1]).toMatch(/vector-effect:\s*non-scaling-stroke/);
+  });
+
+  it("draws the agent links as a moving hairline, not a solid pipe", () => {
+    const rule = css.match(/\.link\s*\{([^}]*)\}/);
+    const body = rule![1];
+    const width = Number(body.match(/stroke-width:\s*([\d.]+)/)?.[1]);
+    expect(width).toBeLessThanOrEqual(1.5);
+    expect(body).toMatch(/stroke-dasharray:/);
+    expect(body).toMatch(/animation:\s*flow/);
+  });
+});

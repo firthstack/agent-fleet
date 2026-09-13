@@ -176,7 +176,29 @@ export function Landing() {
           ))}
         </div>
 
-        <div className="earth" style={globe} />
+        <div className="earth" style={globe}>
+          <svg viewBox="0 0 100 100" className="globe-wire" aria-hidden="true">
+            {/* the limb */}
+            <circle cx="50" cy="50" r="49.4" className="limb" />
+            {/* meridians — an orthographic sphere, so longitude lines narrow
+                toward the edges and the centre one is straight */}
+            <g className="grid">
+                            <ellipse cx="50" cy="50" rx="40" ry="49.4" />
+              <ellipse cx="50" cy="50" rx="26" ry="49.4" />
+              <ellipse cx="50" cy="50" rx="12" ry="49.4" />
+              <line x1="50" y1="0.6" x2="50" y2="99.4" />
+            </g>
+            {/* parallels — tilted a little so the globe reads as a ball
+                rather than a disc with stripes */}
+            <g className="grid">
+                            <ellipse cx="50" cy="7.2" rx="24.7" ry="4.0" />
+              <ellipse cx="50" cy="25.3" rx="42.8" ry="6.8" />
+              <ellipse cx="50" cy="50.0" rx="49.4" ry="7.9" />
+              <ellipse cx="50" cy="74.7" rx="42.8" ry="6.8" />
+              <ellipse cx="50" cy="92.8" rx="24.7" ry="4.0" />
+            </g>
+          </svg>
+        </div>
 
         {/* 01 — the agents appear, each on its own rhythm */}
         <div className="stage s-connect">
@@ -203,7 +225,10 @@ export function Landing() {
                     key={`l${i}`}
                     className="link"
                     d={`M${a.x} ${a.y} Q${(a.x + b.x) / 2} ${Math.min(a.y, b.y) - 9} ${b.x} ${b.y}`}
-                    style={{ animationDelay: `${i}s` }}
+                    // Negative delays start each link partway through the
+                    // cycle, so the dashes read as one signal travelling the
+                    // chain rather than four lines blinking together.
+                    style={{ animationDelay: `${-i * 0.4}s` }}
                   />
                 );
               })}
