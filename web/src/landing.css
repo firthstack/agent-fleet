@@ -349,13 +349,19 @@
   font-size: 12px;
   color: var(--dim);
 }
+/*
+ * `transform` in a keyframe replaces the property outright, so the centring
+ * from `.craft-glyph` has to be repeated in every frame. Left out, each craft
+ * hangs half its own size down and to the right of the point it was placed at
+ * — which is how the last one came to sit on its own label.
+ */
 @keyframes bob {
   0%,
   100% {
-    transform: translateY(0);
+    transform: translate(-50%, -50%) translateY(0);
   }
   50% {
-    transform: translateY(-7px);
+    transform: translate(-50%, -50%) translateY(-7px);
   }
 }
 
@@ -557,13 +563,29 @@
   max-width: 680px;
   margin: 0 auto 36px;
 }
-.four-words span {
+/* Beats `.site a` (0,1,1) at (0,2,1), so the words keep their own colour
+ * and the whole cell — not just the text — is the target. */
+.site .four-words a {
+  display: block;
   background: rgba(7, 9, 12, 0.8);
   padding: 17px 8px;
   font-family: var(--mono);
   font-size: 13px;
   letter-spacing: 0.08em;
   color: var(--accent);
+  transition: background 0.18s ease, color 0.18s ease;
+}
+.site .four-words a:hover,
+.site .four-words a:focus-visible {
+  background: rgba(111, 179, 224, 0.11);
+  color: #cfe6f6;
+}
+
+/* The stops take focus so a jump moves the caret too. The ring would be a
+ * box round a whole screen; the link it lands before carries its own. */
+.site .stop:focus,
+.site .stop:focus-visible {
+  outline: none;
 }
 
 .site-actions {

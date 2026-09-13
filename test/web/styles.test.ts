@@ -156,6 +156,13 @@ describe("landing page link colours", () => {
     expect(beats(".site .site-ghost", linkRule)).toBe(true);
     expect(beats(".site .links a:not(.site-cta)", linkRule)).toBe(true);
   });
+
+  it("lets the hero's four words keep theirs", () => {
+    // They became links when they became jumps; inheriting the plain link
+    // colour would leave the contents row a shade off from everything else.
+    expect(css).toContain(".site .four-words a {");
+    expect(beats(".site .four-words a", linkRule)).toBe(true);
+  });
 });
 
 /**
@@ -267,5 +274,50 @@ describe("the fold shows there is more", () => {
     const stop = css.match(/\.stop:not\(\.centred\)\s*\{([^}]*)\}/);
     expect(stop, ".stop:not(.centred) rule should exist").not.toBeNull();
     expect(stop![1]).toMatch(/align-items:\s*flex-start/);
+  });
+});
+
+/**
+ * A keyframe `transform` does not add to the element's transform, it replaces
+ * it. Anything centred with `translate(-50%, -50%)` and then animated has to
+ * repeat that centring in every frame, or it silently hangs half its own size
+ * down and to the right of where it was placed. That is what put the last
+ * craft in the formation on top of its own label — a collision no coordinate
+ * in the markup accounts for.
+ */
+describe("landing animations that move a centred element", () => {
+  const css = readFileSync(new URL("../../web/src/landing.css", import.meta.url), "utf8");
+  const CENTRE = "translate(-50%, -50%)";
+
+  /** Classes that both centre themselves and hand themselves to an animation. */
+  function centredAnimations(): Array<{ selector: string; keyframes: string }> {
+    const out: Array<{ selector: string; keyframes: string }> = [];
+    for (const [, selector, body] of css.matchAll(/([^{}@]+)\{([^{}]*)\}/g)) {
+      if (!body.includes(CENTRE)) continue;
+      const animation = body.match(/\banimation:\s*([\w-]+)/);
+      if (animation) out.push({ selector: selector.trim(), keyframes: animation[1] });
+    }
+    return out;
+  }
+
+  it("finds the centred, animated elements it is meant to be watching", () => {
+    // If this ever drops to zero the rest of the suite passes vacuously.
+    const found = centredAnimations();
+    expect(found.length).toBeGreaterThan(0);
+    expect(found.map((f) => f.keyframes)).toContain("bob");
+  });
+
+  it("keeps the centring in every frame that sets a transform", () => {
+    for (const { selector, keyframes } of centredAnimations()) {
+      const block = css.match(new RegExp(`@keyframes\\s+${keyframes}\\s*\\{([\\s\\S]*?)\\n\\}`));
+      expect(block, `no @keyframes ${keyframes} for ${selector}`).toBeTruthy();
+      const transforms = [...(block?.[1] ?? "").matchAll(/transform:\s*([^;]+);/g)];
+      expect(transforms.length, `@keyframes ${keyframes} sets no transform`).toBeGreaterThan(0);
+      for (const [, value] of transforms) {
+        expect(value, `@keyframes ${keyframes} drops the centring from ${selector}`).toContain(
+          CENTRE,
+        );
+      }
+    }
   });
 });

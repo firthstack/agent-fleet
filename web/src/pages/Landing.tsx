@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { Link } from "react-router-dom";
 import { AsciiGlobe } from "../components/AsciiGlobe.tsx";
 import { cameraAt, progressOf, stageFor } from "../landingCamera.ts";
@@ -38,6 +38,15 @@ const FORMATION = [
   { x: 32, y: 50 },
   { x: 63, y: 45 },
 ];
+
+/**
+ * The four words in the hero, and the stops they name.
+ *
+ * They read as a contents page, so they behave like one. The `id` is the word
+ * itself — a reader who lands on `#trace` from someone else's link gets the
+ * same place the word goes to.
+ */
+const WORDS = ["connect", "compose", "trace", "protocol"] as const;
 
 const TRACE = [
   { state: "developing", note: "dev.implement dispatched", gap: "+2s", slow: false },
@@ -124,6 +133,27 @@ function useScrollCamera(stops: number) {
   const stage = useMemo(() => stageFor(progress, stops), [progress, stops]);
 
   return { progress, stage };
+}
+
+/**
+ * Jump to a stop, gently.
+ *
+ * The camera is driven by scroll position, so a native fragment jump
+ * teleports the globe: the whole move the page exists to show happens in one
+ * frame, unseen. Scrolling smoothly plays it instead — except for anyone who
+ * has asked for less movement, who gets the jump.
+ */
+function jumpTo(event: MouseEvent<HTMLAnchorElement>, id: string) {
+  const target = document.getElementById(id);
+  // No target means something was renamed; let the browser fail its own way
+  // rather than swallowing the click.
+  if (!target) return;
+  event.preventDefault();
+  const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  target.scrollIntoView({ behavior: still ? "auto" : "smooth", block: "start" });
+  // scrollIntoView moves the page but not the caret. Without this a keyboard
+  // user is scrolled to the stop and then tabs on from the top of the page.
+  target.focus({ preventScroll: true });
 }
 
 export function Landing() {
@@ -252,10 +282,10 @@ export function Landing() {
                   &lt;=&gt;
                 </span>
               ))}
-              <span className="craft-glyph empty" style={{ left: "46%", top: "74%", animationDelay: "4s" }}>
+              <span className="craft-glyph empty" style={{ left: "46%", top: "72%", animationDelay: "4s" }}>
                 &lt;&middot;&gt;
               </span>
-              <span className="formation-label" style={{ left: "46%", top: "84%" }}>
+              <span className="formation-label" style={{ left: "46%", top: "87%" }}>
                 + yours
               </span>
             </div>
@@ -289,10 +319,11 @@ export function Landing() {
               the record.
             </p>
             <div className="four-words">
-              <span>connect</span>
-              <span>compose</span>
-              <span>trace</span>
-              <span>protocol</span>
+              {WORDS.map((word) => (
+                <a key={word} href={`#${word}`} onClick={(e) => jumpTo(e, word)}>
+                  {word}
+                </a>
+              ))}
             </div>
             <div className="site-actions">
               <Link to="/login" className="site-cta big">
@@ -305,7 +336,7 @@ export function Landing() {
           </div>
         </section>
 
-        <section className="stop">
+        <section className="stop" id="connect" tabIndex={-1}>
           <div>
             <p className="eyebrow">01 — connect</p>
             <h2>Every agent you have, in one place.</h2>
@@ -326,7 +357,7 @@ export function Landing() {
           </div>
         </section>
 
-        <section className="stop">
+        <section className="stop" id="compose" tabIndex={-1}>
           <div>
             <p className="eyebrow">02 — compose</p>
             <h2>Then give them an order to work in.</h2>
@@ -350,7 +381,7 @@ export function Landing() {
           </div>
         </section>
 
-        <section className="stop">
+        <section className="stop" id="trace" tabIndex={-1}>
           <div>
             <p className="eyebrow">03 — trace</p>
             <h2>Watch the whole fleet at once.</h2>
@@ -374,7 +405,7 @@ export function Landing() {
           </div>
         </section>
 
-        <section className="stop">
+        <section className="stop" id="protocol" tabIndex={-1}>
           <div>
             <p className="eyebrow">04 — protocol</p>
             <h2>Standard A2A. Nothing to install.</h2>
