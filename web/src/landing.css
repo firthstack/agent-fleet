@@ -469,11 +469,30 @@
   justify-content: center;
   text-align: center;
 }
-/* The hero's copy sits high: the horizon belongs under the headline, and
- * vertically centred text left no room for it without overlapping. */
+/*
+ * The hero's copy sits high: the horizon belongs under the headline, and
+ * vertically centred text left no room for it without overlapping.
+ *
+ * 88vh, not a full screen, so the next stop's eyebrow clears the fold. A page
+ * whose whole idea lives in the scroll has to say so, and content showing
+ * under the fold says it without spending a line of copy on "scroll ↓".
+ */
 .stop.hero {
+  min-height: 88vh;
   align-items: flex-start;
   padding-top: 12vh;
+}
+
+/*
+ * Top-aligned rather than centred, which is what actually makes the peek
+ * work: centred copy floats to a different height in every stop depending on
+ * how long it is, so the first line after the hero sat a quarter of a screen
+ * down and nothing showed. It also steadies the rhythm — every stop now opens
+ * at the same height.
+ */
+.stop:not(.centred) {
+  align-items: flex-start;
+  padding-top: 64px;
 }
 .stop.centred > div {
   max-width: 840px;
@@ -628,13 +647,6 @@
   font-size: 11.5px;
   color: var(--dim);
   text-align: right;
-}
-
-.scroll-cue {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--dim);
-  margin: 48px 0 0;
 }
 
 .site-foot {

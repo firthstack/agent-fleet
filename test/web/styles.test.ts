@@ -244,3 +244,28 @@ describe("the starfield keeps its magnitudes", () => {
     expect(body).not.toMatch(/opacity:\s*[\d.]+\s*;/);
   });
 });
+
+/**
+ * The page's one idea lives in the scroll, so something has to say there is
+ * more below. A line of copy saying "scroll ↓" was the first answer; content
+ * clearing the fold is the quieter one, and it only works while two things
+ * hold — the hero stops short of a full screen, and the stop after it opens
+ * at its own top rather than floating to the middle.
+ */
+describe("the fold shows there is more", () => {
+  const css = readFileSync(new URL("../../web/src/landing.css", import.meta.url), "utf8");
+
+  it("keeps the hero under a full screen", () => {
+    const hero = css.match(/\.stop\.hero\s*\{([^}]*)\}/);
+    expect(hero, ".stop.hero rule should exist").not.toBeNull();
+    const vh = Number(hero![1].match(/min-height:\s*([\d.]+)vh/)?.[1]);
+    expect(vh).toBeGreaterThan(70);
+    expect(vh).toBeLessThan(95);
+  });
+
+  it("opens the following stops at their top, so the first line clears it", () => {
+    const stop = css.match(/\.stop:not\(\.centred\)\s*\{([^}]*)\}/);
+    expect(stop, ".stop:not(.centred) rule should exist").not.toBeNull();
+    expect(stop![1]).toMatch(/align-items:\s*flex-start/);
+  });
+});

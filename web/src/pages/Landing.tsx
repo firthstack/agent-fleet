@@ -296,7 +296,6 @@ export function Landing() {
                 Read the docs
               </a>
             </div>
-            <p className="scroll-cue">scroll ↓</p>
           </div>
         </section>
 
