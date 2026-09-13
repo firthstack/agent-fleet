@@ -593,6 +593,11 @@ label.check input {
   margin-top: 2px;
 }
 
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
 .nav a {
   font-size: 13.5px;
   color: var(--muted);

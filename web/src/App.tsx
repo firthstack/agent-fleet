@@ -2,7 +2,6 @@ import { Suspense, lazy } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { Landing } from "./pages/Landing.tsx";
 import { Login } from "./pages/Login.tsx";
-import { Dashboard } from "./pages/Dashboard.tsx";
 import { Agents } from "./pages/Agents.tsx";
 import { AgentNew } from "./pages/AgentNew.tsx";
 import { AgentDetail } from "./pages/AgentDetail.tsx";
@@ -32,7 +31,9 @@ export function App() {
     <Routes>
       <Route path="/" element={<Landing />} />
       <Route path="/login" element={<Login />} />
-      <Route path="/app" element={<Dashboard />} />
+      {/* No dashboard page: agents is the only thing worth landing on until
+          there is real fleet-wide activity to show. See agent-fleet#10. */}
+      <Route path="/app" element={<Navigate to="/app/agents" replace />} />
       <Route path="/app/agents" element={<Agents />} />
       {/* Static before dynamic, so /app/agents/new is never read as an id. */}
       <Route path="/app/agents/new" element={<AgentNew />} />
