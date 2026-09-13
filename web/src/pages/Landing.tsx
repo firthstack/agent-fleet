@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { AsciiGlobe } from "../components/AsciiGlobe.tsx";
 import { cameraAt, progressOf, stageFor } from "../landingCamera.ts";
+import { BOX, LOOP, TIMELINE, VIEWBOX, boxY, loopLabelY, loopPath } from "../traceGraph.ts";
 import "../landing.css";
 
 /**
@@ -27,15 +28,6 @@ const HOPS = [
     t: "/a2a/callbacks/…",
   },
   { n: "4", what: "the state graph moves on, and dispatches the next", t: "no connection held" },
-];
-
-/** The same run the copy describes, as the graph draws it. */
-const TIMELINE = [
-  { state: "developing", gap: "4.1h", slow: true, done: false },
-  { state: "pr_opened", gap: "3s", slow: false, done: false },
-  { state: "reviewing", gap: "3.2h", slow: true, done: false },
-  { state: "requesting_merge", gap: "11s", slow: false, done: false },
-  { state: "completed", gap: "", slow: false, done: true },
 ];
 
 /** Loose formation, in percentages of the panel it sits in. */
@@ -197,36 +189,50 @@ export function Landing() {
         {/* 03 — the state graph laid out in time, in the freed right half */}
         <div className="stage s-trace">
           <div className="panel-right">
-            <svg viewBox="0 0 460 420" className="stage-svg" aria-hidden="true">
+            <svg viewBox={`0 0 ${VIEWBOX.w} ${VIEWBOX.h}`} className="stage-svg" aria-hidden="true">
               <defs>
                 <marker id="tz" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                  <path d="M0,0 L8,4 L0,8 z" fill="#3a434e" />
+                  <path d="M0,0 L8,4 L0,8 z" fill="#39424d" />
+                </marker>
+                {/* the loop keeps its own head: a grey arrow on a blue dashed
+                    line reads as the line stopping short of the box */}
+                <marker id="tzl" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M0,0 L8,4 L0,8 z" fill="rgba(111,179,224,.7)" />
                 </marker>
               </defs>
               {TIMELINE.map((step, i) => {
-                const y = 40 + i * 82;
+                const y = boxY(i);
                 const next = TIMELINE[i + 1];
                 return (
                   <g key={step.state}>
                     {next ? (
                       <>
-                        <path d={`M150 ${y + 16} V ${y + 66}`} stroke="#3a434e" strokeWidth="1.3" fill="none" markerEnd="url(#tz)" />
-                        <text x="162" y={y + 46} fontFamily="IBM Plex Mono, monospace" fontSize="12" fill={step.slow ? "#d9ae66" : "#5f6b78"}>
+                        <path d={`M${BOX.x + BOX.w / 2} ${y + BOX.h} V ${y + BOX.pitch - 14}`} stroke="#39424d" strokeWidth="1.2" fill="none" markerEnd="url(#tz)" />
+                        <text x={BOX.x + BOX.w / 2 + 12} y={y + BOX.h + 24} fontFamily="IBM Plex Mono, monospace" fontSize="12" fill={step.slow ? "#b3903f" : "#57616d"}>
                           {step.gap}
                         </text>
                       </>
                     ) : null}
-                    <rect x="40" y={y} width="220" height="32" rx="6" fill={step.done ? "#0b1a14" : "#0f151c"} stroke={step.done ? "#1b6e4a" : "#3a434e"} />
-                    <text x="150" y={y + 21} textAnchor="middle" fontFamily="IBM Plex Mono, monospace" fontSize="12.5" fill={step.done ? "#63c79a" : "#e3e8ee"}>
+                    <rect
+                      x={BOX.x}
+                      y={y}
+                      width={BOX.w}
+                      height={BOX.h}
+                      rx="6"
+                      fill={step.done ? "rgba(14,32,25,.7)" : "rgba(15,21,28,.7)"}
+                      stroke={step.done ? "#2c6349" : "#39424d"}
+                    />
+                    <text x={BOX.x + BOX.w / 2} y={y + 22} textAnchor="middle" fontFamily="IBM Plex Mono, monospace" fontSize="12.5" fill={step.done ? "#6aa98c" : "#9aa9b8"}>
                       {step.state}
                     </text>
                   </g>
                 );
               })}
-              {/* the loop back — the reason this is a graph and not a list */}
-              <path className="loop" d="M260 138 H340 V56 H260" stroke="#6fb3e0" strokeWidth="1.4" fill="none" markerEnd="url(#tz)" />
-              <text x="348" y="100" fontFamily="IBM Plex Mono, monospace" fontSize="11" fill="#6fb3e0">
-                request_changes
+              {/* the loop back — `request_changes` is the review's verdict, so
+                  it leaves reviewing and returns to developing */}
+              <path className="loop" d={loopPath()} stroke="rgba(111,179,224,.7)" strokeWidth="1.2" fill="none" markerEnd="url(#tzl)" />
+              <text x={BOX.lane + 8} y={loopLabelY()} fontFamily="IBM Plex Mono, monospace" fontSize="11" fill="rgba(111,179,224,.68)">
+                {LOOP.label}
               </text>
             </svg>
           </div>
