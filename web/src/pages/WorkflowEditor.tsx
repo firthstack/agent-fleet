@@ -21,8 +21,10 @@ import {
 } from "../workflowFormat.ts";
 
 /**
- * `/app/workflows/:name` (docs §7) — code on the left, the graph on the
- * right, validation underneath.
+ * `/app/workflows/:name` (docs §7) — the state machine by itself until
+ * "Edit" is clicked, at which point the code appears on the left of it and
+ * validation underneath. Most visits are to start or watch a run, not to
+ * change the definition, so editing is opt-in rather than the default.
  *
  * The rules are never reimplemented here. `validateDefinition` runs on the
  * server and this page asks it; a second copy in the browser would drift from
@@ -140,6 +142,36 @@ function StartRun({ name, versions }: { name: string; versions: number[] }) {
   );
 }
 
+/** The state diagram, shown at all times, with the one control that opens
+ *  the edit interface — most visits are to watch a run, not to change the
+ *  definition, so the diagram is the default and editing is opt-in. */
+function StatesPanel({
+  definition,
+  editing,
+  onToggleEdit,
+}: {
+  definition: WorkflowDefinition | null;
+  editing: boolean;
+  onToggleEdit: () => void;
+}) {
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <h2>States</h2>
+        <button type="button" className="btn ghost small" onClick={onToggleEdit}>
+          {editing ? "Done" : "Edit"}
+        </button>
+      </div>
+      <p className="hint">
+        Drawn from the definition. A loop back to an earlier state runs
+        up the right-hand lane — that edge is the reason this format is
+        a state machine and not a DAG.
+      </p>
+      <StateDiagram definition={definition} />
+    </div>
+  );
+}
+
 export function WorkflowEditor() {
   const { name = "" } = useParams<{ name: string }>();
   const [text, setText] = useState<string | null>(null);
@@ -151,6 +183,7 @@ export function WorkflowEditor() {
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [format, setFormat] = useState<DefinitionFormat>(rememberedFormat);
+  const [editing, setEditing] = useState(false);
 
   // Read inside the loader without making it a dependency: re-running that
   // effect on a toggle would refetch and overwrite whatever was being typed.
@@ -275,125 +308,123 @@ export function WorkflowEditor() {
 
           <StartRun name={name} versions={versions} />
 
-          <div className="editor">
-            <div className="panel">
-              <div className="panel-head">
-                <h2>Definition</h2>
-                <div className="segmented" role="group" aria-label="Definition format">
-                  {(["json", "yaml"] as const).map((option) => (
-                    <button
-                      key={option}
-                      type="button"
-                      className={option === format ? "on" : ""}
-                      aria-pressed={option === format}
-                      onClick={() => switchFormat(option)}
-                    >
-                      {option.toUpperCase()}
-                    </button>
-                  ))}
+          {editing ? (
+            <div className="editor">
+              <div className="panel">
+                <div className="panel-head">
+                  <h2>Definition</h2>
+                  <div className="segmented" role="group" aria-label="Definition format">
+                    {(["json", "yaml"] as const).map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        className={option === format ? "on" : ""}
+                        aria-pressed={option === format}
+                        onClick={() => switchFormat(option)}
+                      >
+                        {option.toUpperCase()}
+                      </button>
+                    ))}
+                  </div>
                 </div>
+                {format === "yaml" ? (
+                  <p className="hint">
+                    YAML is an editing convenience. A definition is published and
+                    stored as JSON, so comments and layout live only as long as
+                    this text — reopening the page shows JSON.
+                  </p>
+                ) : null}
+                <textarea
+                  className="mono code"
+                  spellCheck={false}
+                  rows={28}
+                  value={text ?? ""}
+                  onChange={(e) => setText(e.target.value)}
+                />
               </div>
-              {format === "yaml" ? (
-                <p className="hint">
-                  YAML is an editing convenience. A definition is published and
-                  stored as JSON, so comments and layout live only as long as
-                  this text — reopening the page shows JSON.
-                </p>
-              ) : null}
-              <textarea
-                className="mono code"
-                spellCheck={false}
-                rows={28}
-                value={text ?? ""}
-                onChange={(e) => setText(e.target.value)}
-              />
-            </div>
 
+              <StatesPanel definition={def} editing onToggleEdit={() => setEditing(false)} />
+            </div>
+          ) : (
+            <StatesPanel definition={def} editing={false} onToggleEdit={() => setEditing(true)} />
+          )}
+
+          {editing ? (
             <div className="panel">
-              <h2>States</h2>
-              <p className="hint">
-                Drawn from the definition. A loop back to an earlier state runs
-                up the right-hand lane — that edge is the reason this format is
-                a state machine and not a DAG.
-              </p>
-              <StateDiagram definition={def} />
-            </div>
-          </div>
-
-          <div className="panel">
-            <h2>
-              Validation{" "}
+              <h2>
+                Validation{" "}
+                {syntax ? (
+                  <span className="pill bad">invalid {format.toUpperCase()}</span>
+                ) : checking ? (
+                  <span className="pill">checking…</span>
+                ) : issues && issues.length > 0 ? (
+                  <span className="pill warn">
+                    {issues.length} issue{issues.length > 1 ? "s" : ""}
+                  </span>
+                ) : publishable ? (
+                  <span className="pill ok">ready</span>
+                ) : null}
+                {warnings.length > 0 ? (
+                  <span className="pill warn">
+                    {warnings.length} against your fleet
+                  </span>
+                ) : null}
+              </h2>
               {syntax ? (
-                <span className="pill bad">invalid {format.toUpperCase()}</span>
-              ) : checking ? (
-                <span className="pill">checking…</span>
+                <p className="error">{syntax}</p>
               ) : issues && issues.length > 0 ? (
-                <span className="pill warn">
-                  {issues.length} issue{issues.length > 1 ? "s" : ""}
-                </span>
-              ) : publishable ? (
-                <span className="pill ok">ready</span>
-              ) : null}
-              {warnings.length > 0 ? (
-                <span className="pill warn">
-                  {warnings.length} against your fleet
-                </span>
-              ) : null}
-            </h2>
-            {syntax ? (
-              <p className="error">{syntax}</p>
-            ) : issues && issues.length > 0 ? (
-              <ul className="rows">
-                {issues.map((issue, i) => (
-                  <li key={`${issue.path}-${i}`} className="row">
-                    <code>{issue.path}</code> <span className="row-sub">{issue.message}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="hint">
-                The same check that gates publishing — it runs on the server, so
-                what it says here is what publishing will do.
-              </p>
-            )}
-
-            {warnings.length > 0 ? (
-              <div className="warnings">
-                <p className="hint">
-                  Checked against the agents you have connected. These do not
-                  stop a publish — a definition can be written before the agent
-                  that serves it exists — but each one is a failure you would
-                  otherwise meet part-way through a run.
-                </p>
                 <ul className="rows">
-                  {warnings.map((warning, i) => (
-                    <li key={`${warning.path}-${i}`} className="row">
-                      <code>{warning.path}</code>{" "}
-                      <span className="row-sub">{warning.message}</span>
+                  {issues.map((issue, i) => (
+                    <li key={`${issue.path}-${i}`} className="row">
+                      <code>{issue.path}</code> <span className="row-sub">{issue.message}</span>
                     </li>
                   ))}
                 </ul>
-              </div>
-            ) : null}
+              ) : (
+                <p className="hint">
+                  The same check that gates publishing — it runs on the server, so
+                  what it says here is what publishing will do.
+                </p>
+              )}
 
-            <form className="inline-form" onSubmit={publish}>
-              <label>
-                Publish as version
-                <input
-                  type="number"
-                  min={1}
-                  value={publishAs}
-                  onChange={(e) => setPublishAs(e.target.value)}
-                  required
-                />
-              </label>
-              <button className="btn" type="submit" disabled={!publishable}>
-                Publish
-              </button>
-            </form>
-            {error ? <p className="error">{error}</p> : null}
-            {note ? <p className="lead">{note}</p> : null}
-          </div>
+              {warnings.length > 0 ? (
+                <div className="warnings">
+                  <p className="hint">
+                    Checked against the agents you have connected. These do not
+                    stop a publish — a definition can be written before the agent
+                    that serves it exists — but each one is a failure you would
+                    otherwise meet part-way through a run.
+                  </p>
+                  <ul className="rows">
+                    {warnings.map((warning, i) => (
+                      <li key={`${warning.path}-${i}`} className="row">
+                        <code>{warning.path}</code>{" "}
+                        <span className="row-sub">{warning.message}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              <form className="inline-form" onSubmit={publish}>
+                <label>
+                  Publish as version
+                  <input
+                    type="number"
+                    min={1}
+                    value={publishAs}
+                    onChange={(e) => setPublishAs(e.target.value)}
+                    required
+                  />
+                </label>
+                <button className="btn" type="submit" disabled={!publishable}>
+                  Publish
+                </button>
+              </form>
+              {error ? <p className="error">{error}</p> : null}
+              {note ? <p className="lead">{note}</p> : null}
+            </div>
+          ) : null}
         </>
       )}
     </Shell>

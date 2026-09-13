@@ -24,12 +24,14 @@
     "dev:web": "vite"
   },
   "devDependencies": {
+    "@testing-library/react": "^16.3.3",
     "@types/node": "^25.6.0",
     "@types/pg": "^8.20.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
     "esbuild": "^0.27.7",
+    "jsdom": "^30.0.1",
     "testcontainers": "^11.14.0",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3",

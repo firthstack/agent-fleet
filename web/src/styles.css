@@ -762,6 +762,33 @@ textarea.code {
   max-width: none;
 }
 
+/* The browser default scrollbar is a flat white box regardless of theme —
+ * jarring against a dark surface. Themed so light and dark mode each pick
+ * up their own `--surface-2` / `--rule-strong` automatically. */
+textarea.code,
+.diagram {
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule-strong) var(--surface-2);
+}
+textarea.code::-webkit-scrollbar,
+.diagram::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+textarea.code::-webkit-scrollbar-track,
+.diagram::-webkit-scrollbar-track {
+  background: var(--surface-2);
+}
+textarea.code::-webkit-scrollbar-thumb,
+.diagram::-webkit-scrollbar-thumb {
+  background: var(--rule-strong);
+  border-radius: var(--radius);
+}
+textarea.code::-webkit-scrollbar-thumb:hover,
+.diagram::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}
+
 .node rect {
   fill: var(--surface-2);
   stroke: var(--rule-strong);
