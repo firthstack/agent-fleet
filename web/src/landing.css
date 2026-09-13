@@ -256,10 +256,26 @@
   align-items: center;
   gap: 26px;
   font-size: 13.5px;
+}
+/* Same reason as the buttons: `.site a` would otherwise paint the whole nav
+ * accent-blue, and a nav where every item shouts leaves the one that matters
+ * — the filled Start a run — with nothing to stand out against. */
+.site .links a:not(.site-cta) {
   color: var(--muted);
 }
+.site .links a:not(.site-cta):hover {
+  color: var(--ink);
+}
 
-.site-cta {
+/*
+ * Scoped under `.site` on purpose, not for tidiness: every button here is an
+ * <a>, and `.site a { color: var(--accent) }` above is one class plus one
+ * element — which out-specifies a bare `.site-cta`. Written unscoped, the
+ * filled button took the link colour and its label vanished into its own
+ * accent background. Two classes beat a class and an element, so the scope
+ * is what makes these rules win.
+ */
+.site .site-cta {
   background: var(--accent);
   color: var(--ground);
   font-weight: 600;
@@ -267,22 +283,22 @@
   padding: 7px 14px;
   border-radius: 6px;
 }
-.site-cta.big {
-  font-size: 15px;
-  padding: 13px 26px;
-}
-.site-cta.big:hover {
+.site .site-cta:hover {
   color: var(--ground);
   background: #8cc3e8;
 }
-.site-ghost {
+.site .site-cta.big {
+  font-size: 15px;
+  padding: 13px 26px;
+}
+.site .site-ghost {
   border: 1px solid #3a434e;
   color: var(--ink);
   font-size: 15px;
   padding: 12px 24px;
   border-radius: 6px;
 }
-.site-ghost:hover {
+.site .site-ghost:hover {
   color: var(--ink);
   border-color: var(--muted);
 }

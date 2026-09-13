@@ -104,3 +104,56 @@ describe("the run table stays scannable", () => {
     expect(pill![1]).toMatch(/justify-self:\s*start/);
   });
 });
+
+/**
+ * `.site a` paints every link on the landing page accent-blue. Anything that
+ * needs a different colour — the filled button most of all — has to out-rank
+ * it, and a bare `.site-cta` does not: one class loses to a class plus an
+ * element. Written that way the primary button's label rendered in its own
+ * background colour and disappeared.
+ */
+describe("landing page link colours", () => {
+  const css = readFileSync(new URL("../../web/src/landing.css", import.meta.url), "utf8");
+
+  /** (ids, classes/attrs/pseudo-classes, elements/pseudo-elements). */
+  function specificity(selector: string): [number, number, number] {
+    const s = selector.trim();
+    const ids = (s.match(/#[\w-]+/g) ?? []).length;
+    const classes =
+      (s.match(/\.[\w-]+/g) ?? []).length +
+      (s.match(/\[[^\]]*\]/g) ?? []).length +
+      // `:not(...)` itself does not count; its contents already matched above.
+      (s.match(/:(?!:)(?!not\b)[\w-]+/g) ?? []).length;
+    const elements = (s.match(/(^|[\s>+~])([a-z][\w-]*)/g) ?? []).length;
+    return [ids, classes, elements];
+  }
+
+  function beats(a: string, b: string): boolean {
+    const x = specificity(a);
+    const y = specificity(b);
+    for (let i = 0; i < 3; i += 1) {
+      if (x[i] !== y[i]) return x[i] > y[i];
+    }
+    // Equal specificity: later in the file wins.
+    return css.indexOf(a) > css.indexOf(b);
+  }
+
+  const linkRule = ".site a";
+
+  it("has a rule that paints every link accent", () => {
+    expect(css).toContain(`${linkRule} {`);
+  });
+
+  it("lets the filled button keep its own label colour", () => {
+    // The failure this guards is invisible in code review and total in the
+    // browser: accent text on an accent background.
+    expect(css).toContain(".site .site-cta {");
+    expect(beats(".site .site-cta", linkRule)).toBe(true);
+    expect(beats(".site .site-cta:hover", ".site a:hover")).toBe(true);
+  });
+
+  it("lets the outline button and the nav keep theirs", () => {
+    expect(beats(".site .site-ghost", linkRule)).toBe(true);
+    expect(beats(".site .links a:not(.site-cta)", linkRule)).toBe(true);
+  });
+});
