@@ -28,6 +28,16 @@ describe("lastRunSummary", () => {
     );
   });
 
+  it("shows <1s for a run that finished in under a second", () => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-12T00:10:00.000Z"));
+    const startedAt = "2026-09-12T00:09:59.500Z";
+    const endedAt = "2026-09-12T00:10:00.000Z";
+
+    const summary = lastRunSummary(startedAt, endedAt);
+
+    expect(summary?.text).toBe("last run 0s ago · took <1s");
+  });
+
   it("still reports the end time when the start time is unknown", () => {
     vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-12T00:10:00.000Z"));
     const endedAt = "2026-09-12T00:05:00.000Z";

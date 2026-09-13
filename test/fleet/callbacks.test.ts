@@ -27,6 +27,7 @@ function task(overrides: Partial<FleetTaskRecord> = {}): FleetTaskRecord {
     notifiedAt: null,
     createdAt: "2026-09-11T00:00:00.000Z",
     updatedAt: "2026-09-11T00:00:00.000Z",
+    completedAt: null,
     ...overrides,
   };
 }

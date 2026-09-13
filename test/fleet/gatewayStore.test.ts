@@ -574,7 +574,33 @@ describe("GatewayStore.agentTaskStats", () => {
     const stats = await store.agentTaskStats(acme.id);
     const devAgent = stats.get("dev-agent");
     expect(devAgent?.lastRunStartedAt).toBe(latest.createdAt);
-    expect(devAgent?.lastRunEndedAt).toBe(settled?.updatedAt);
+    expect(devAgent?.lastRunEndedAt).toBe(settled?.completedAt);
+  });
+
+  it("keeps showing the task that finished last, even after an older task's notification is retried", async () => {
+    const acme = await seed();
+
+    // Task A finishes first...
+    const taskA = await store.createTask({ tenantId: acme.id, ...args("dev-agent", "up-a") });
+    await store.attachDownstream(taskA.id, { downstreamTaskId: "d1", callbackTokenHash: "h1" });
+    await store.recordDownstreamResult(taskA.id, { ok: true });
+
+    // ...task B finishes after it, and is the one that should be shown as the last run...
+    const taskB = await store.createTask({ tenantId: acme.id, ...args("dev-agent", "up-b") });
+    await store.attachDownstream(taskB.id, { downstreamTaskId: "d2", callbackTokenHash: "h2" });
+    await store.recordDownstreamResult(taskB.id, { ok: true });
+    const settledB = await store.getTask(taskB.id);
+
+    // ...but A's notification is what gets retried afterwards, which used to
+    // stamp A's updated_at later than B's and wrongly promote it back to
+    // "most recently completed" (and inflate its reported duration with the
+    // notification-retry delay).
+    await store.recordNotifyFailure(taskA.id, new Date(Date.now() + 60_000));
+
+    const stats = await store.agentTaskStats(acme.id);
+    const devAgent = stats.get("dev-agent");
+    expect(devAgent?.lastRunStartedAt).toBe(taskB.createdAt);
+    expect(devAgent?.lastRunEndedAt).toBe(settledB?.completedAt);
   });
 
   it("reports no last-run timing when nothing has completed yet", async () => {

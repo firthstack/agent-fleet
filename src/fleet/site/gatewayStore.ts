@@ -52,7 +52,7 @@ export interface AgentTaskStats {
   running: number;
   /** `created_at` of the oldest task still `dispatching`/`running`; null when none are. */
   runningSince: string | null;
-  /** `created_at` / `updated_at` of the most recently completed (succeeded or failed)
+  /** `created_at` / `completed_at` of the most recently completed (succeeded or failed)
    *  task; null when none has completed yet. */
   lastRunStartedAt: string | null;
   lastRunEndedAt: string | null;
@@ -76,6 +76,9 @@ export interface FleetTaskRecord {
   notifiedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /** When execution actually finished (result recorded, dispatch failed, or
+   *  swept as timed out) — independent of when the caller was notified. */
+  completedAt: string | null;
 }
 
 export interface CreateTaskInput {
@@ -105,7 +108,7 @@ const TASK_COLUMNS = `
   id, tenant_id, upstream_task_id, caller_agent_id, caller_callback_url,
   caller_callback_auth, target_agent_id, skill_id, downstream_task_id,
   state, attempt, next_retry_at, deadline_at, result_json, notified_at,
-  created_at, updated_at
+  created_at, updated_at, completed_at
 `;
 
 interface AgentRow {
@@ -139,6 +142,7 @@ interface TaskRow {
   notified_at: Date | null;
   created_at: Date;
   updated_at: Date;
+  completed_at: Date | null;
 }
 
 function iso(value: Date | null): string | null {
@@ -179,6 +183,7 @@ function toTask(row: TaskRow): FleetTaskRecord {
     notifiedAt: iso(row.notified_at),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
+    completedAt: iso(row.completed_at),
   };
 }
 
@@ -621,20 +626,15 @@ export class GatewayStore {
         failed: string;
         running: string;
         oldest_running: Date | null;
-        last_run_started_at: Date | null;
-        last_run_ended_at: Date | null;
       }>(
         `SELECT target_agent_id,
            COUNT(*) AS total,
            COUNT(*) FILTER (WHERE outcome = 'succeeded') AS succeeded,
            COUNT(*) FILTER (WHERE outcome = 'failed') AS failed,
            COUNT(*) FILTER (WHERE outcome = 'running') AS running,
-           MIN(created_at) FILTER (WHERE outcome = 'running') AS oldest_running,
-           (array_agg(created_at ORDER BY updated_at DESC)
-             FILTER (WHERE outcome IN ('succeeded', 'failed')))[1] AS last_run_started_at,
-           MAX(updated_at) FILTER (WHERE outcome IN ('succeeded', 'failed')) AS last_run_ended_at
+           MIN(created_at) FILTER (WHERE outcome = 'running') AS oldest_running
          FROM (
-           SELECT target_agent_id, created_at, updated_at,
+           SELECT target_agent_id, created_at,
              CASE
                WHEN state IN ('dispatching', 'running') THEN 'running'
                WHEN state IN ('failed', 'timed_out') THEN 'failed'
@@ -662,9 +662,36 @@ export class GatewayStore {
           failed: Number(row.failed),
           running: Number(row.running),
           runningSince: iso(row.oldest_running),
-          lastRunStartedAt: iso(row.last_run_started_at),
-          lastRunEndedAt: iso(row.last_run_ended_at),
+          lastRunStartedAt: null,
+          lastRunEndedAt: null,
         });
+      }
+
+      // The most recently completed run per agent, found as a latest-row
+      // lookup rather than by aggregating (and sorting) every completed
+      // timestamp an agent has ever had — that cost grows with history and
+      // only one row is ever kept. `completed_at` is set exactly once, when
+      // execution finishes (done/failed/timed_out), so filtering on it alone
+      // already matches the succeeded-or-failed outcomes above; it is never
+      // touched by the later notification-delivery writes.
+      const { rows: lastRuns } = await client.query<{
+        target_agent_id: string;
+        last_run_started_at: Date;
+        last_run_ended_at: Date;
+      }>(
+        `SELECT DISTINCT ON (target_agent_id)
+           target_agent_id, created_at AS last_run_started_at, completed_at AS last_run_ended_at
+         FROM fleet_tasks
+         WHERE tenant_id = $1 AND completed_at IS NOT NULL
+           ${agentId ? "AND target_agent_id = $2" : ""}
+         ORDER BY target_agent_id, completed_at DESC`,
+        agentId ? [tenantId, agentId] : [tenantId],
+      );
+      for (const row of lastRuns) {
+        const entry = stats.get(row.target_agent_id);
+        if (!entry) continue;
+        entry.lastRunStartedAt = iso(row.last_run_started_at);
+        entry.lastRunEndedAt = iso(row.last_run_ended_at);
       }
       return stats;
     });
@@ -910,7 +937,8 @@ export class GatewayStore {
     await this.pool.query(
       `UPDATE fleet_tasks
        SET state = 'failed', result_json = $2,
-           notified_at = now(), callback_token_hash = NULL, updated_at = now()
+           notified_at = now(), callback_token_hash = NULL,
+           completed_at = now(), updated_at = now()
        WHERE id = $1 AND state NOT IN ('done', 'failed', 'timed_out', 'cancelled')`,
       [taskId, JSON.stringify(result)],
     );
@@ -956,7 +984,8 @@ export class GatewayStore {
   ): Promise<void> {
     await this.pool.query(
       `UPDATE fleet_tasks
-       SET result_json = $2, state = 'done_pending_notify', updated_at = now()
+       SET result_json = $2, state = 'done_pending_notify',
+           completed_at = now(), updated_at = now()
        WHERE id = $1 AND state = 'running'`,
       [taskId, JSON.stringify(result)],
     );
@@ -1071,7 +1100,8 @@ export class GatewayStore {
       if (rows.length === 0) return [];
       const updated = await client.query<TaskRow>(
         `UPDATE fleet_tasks
-         SET state = 'timed_out', callback_token_hash = NULL, updated_at = now()
+         SET state = 'timed_out', callback_token_hash = NULL,
+             completed_at = now(), updated_at = now()
          WHERE id = ANY($1::bigint[])
          RETURNING ${TASK_COLUMNS}`,
         [rows.map((r) => r.id)],

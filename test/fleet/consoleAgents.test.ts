@@ -152,6 +152,7 @@ function fixture() {
         notifiedAt: null,
         createdAt: "2026-09-11T00:00:00.000Z",
         updatedAt: "2026-09-11T00:00:00.000Z",
+        completedAt: null,
       };
       tasks.push(task);
       return task;
@@ -488,6 +489,7 @@ describe("GET /api/agents — run stats on the card", () => {
       notifiedAt: null,
       createdAt: "2026-09-11T00:00:00.000Z",
       updatedAt: "2026-09-11T00:00:00.000Z",
+      completedAt: null,
     };
     h.tasks.push(
       { ...base, id: 1, upstreamTaskId: "u1", state: "done" },
@@ -535,6 +537,7 @@ describe("GET /api/agents — run stats on the card", () => {
       notifiedAt: null,
       createdAt: "2026-09-11T00:00:00.000Z",
       updatedAt: "2026-09-11T00:00:00.000Z",
+      completedAt: null,
     });
 
     const res = await h.list();
@@ -822,6 +825,7 @@ describe("GET /api/agents/:id", () => {
         notifiedAt: null,
         createdAt: "2026-09-11T00:00:00.000Z",
         updatedAt: "2026-09-11T00:00:00.000Z",
+        completedAt: null,
       },
       {
         id: 2,
@@ -841,6 +845,7 @@ describe("GET /api/agents/:id", () => {
         notifiedAt: null,
         createdAt: "2026-09-11T00:00:00.000Z",
         updatedAt: "2026-09-11T00:00:00.000Z",
+        completedAt: null,
       },
     );
 

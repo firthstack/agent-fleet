@@ -65,7 +65,11 @@ export function lastRunSummary(
 ): { text: string; title: string } | null {
   if (!endedAt) return null;
   const gap = startedAt ? gapBetween(startedAt, endedAt) : null;
-  const text = `last run ${ago(endedAt)} ago${gap ? ` · took ${gap.text}` : ""}`;
+  // gapBetween drops sub-second gaps as noise for the run timeline, but a
+  // fast completed run still took *some* time and should say so here.
+  const ms = startedAt ? Date.parse(endedAt) - Date.parse(startedAt) : NaN;
+  const took = gap?.text ?? (ms >= 0 && ms < 1000 ? "<1s" : null);
+  const text = `last run ${ago(endedAt)} ago${took ? ` · took ${took}` : ""}`;
   const title = startedAt
     ? `${new Date(startedAt).toLocaleString()} \u2192 ${new Date(endedAt).toLocaleString()}`
     : new Date(endedAt).toLocaleString();
