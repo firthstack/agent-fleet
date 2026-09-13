@@ -38,6 +38,15 @@ const TIMELINE = [
   { state: "completed", gap: "", slow: false, done: true },
 ];
 
+/** Loose formation, in percentages of the panel it sits in. */
+const FORMATION = [
+  { x: 20, y: 26 },
+  { x: 48, y: 17 },
+  { x: 76, y: 29 },
+  { x: 32, y: 50 },
+  { x: 63, y: 45 },
+];
+
 const TRACE = [
   { state: "developing", note: "dev.implement dispatched", gap: "+2s", slow: false },
   { state: "pr_opened", note: "PR #212", gap: "+4.1h", slow: true },
@@ -223,30 +232,27 @@ export function Landing() {
           </div>
         </div>
 
-        {/* 04 — far out, the fleet in formation, held to the right half */}
+        {/* 04 — far out, the fleet in formation, drawn from the same
+            alphabet as the planet it left */}
         <div className="stage s-fleet">
           <div className="panel-right">
-            <svg viewBox="0 0 460 420" className="stage-svg" aria-hidden="true">
-              {[0, 1, 2, 3, 4].map((i) => (
-                <g key={i} className="craft" style={{ animationDelay: `${i * 0.8}s` }}>
-                  <rect
-                    x={60 + (i % 3) * 128}
-                    y={110 + Math.floor(i / 3) * 96 + (i % 2) * 22}
-                    width="92"
-                    height="34"
-                    rx="5"
-                    fill="#0b1016"
-                    stroke="#6fb3e0"
-                  />
-                </g>
+            <div className="formation">
+              {FORMATION.map((c, i) => (
+                <span
+                  key={`${c.x}-${c.y}`}
+                  className="craft-glyph"
+                  style={{ left: `${c.x}%`, top: `${c.y}%`, animationDelay: `${i * 0.8}s` }}
+                >
+                  &lt;=&gt;
+                </span>
               ))}
-              <g className="craft" style={{ animationDelay: "4s" }}>
-                <rect x="188" y="228" width="92" height="34" rx="5" fill="#0b1016" stroke="#3a434e" strokeDasharray="3 2" />
-              </g>
-              <text x="234" y="284" textAnchor="middle" fontFamily="IBM Plex Mono, monospace" fontSize="12" fill="#5f6b78">
+              <span className="craft-glyph empty" style={{ left: "46%", top: "74%", animationDelay: "4s" }}>
+                &lt;&middot;&gt;
+              </span>
+              <span className="formation-label" style={{ left: "46%", top: "84%" }}>
                 + yours
-              </text>
-            </svg>
+              </span>
+            </div>
           </div>
         </div>
 

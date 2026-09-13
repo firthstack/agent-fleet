@@ -20,13 +20,25 @@ const SPIN_RATE = 5;
  * Singapore" is the actual shape of the problem this product solves — and a
  * dot has to be somewhere.
  */
+/**
+ * Where the fleet is, in workflow order.
+ *
+ * Spread over about 140° of longitude, not the 260° the first pass used: a
+ * hemisphere is all that faces the viewer at once, so a chain wider than that
+ * can never be seen whole, and the compose stop showed one or two hops of a
+ * five-step run. This span fits on one face — and a fleet that follows the
+ * working day west to east is the honest version of the picture anyway.
+ */
 export const FLEET = [
-  { name: "dev-agent", lon: -122, lat: 37 }, // San Francisco
-  { name: "ops-agent", lon: -47, lat: -23 }, // São Paulo
-  { name: "review-agent", lon: 13, lat: 52 }, // Berlin
+  { name: "dev-agent", lon: 0, lat: 51 }, // London
+  { name: "ops-agent", lon: 31, lat: 30 }, // Cairo
+  { name: "review-agent", lon: 78, lat: 13 }, // Bangalore
   { name: "deploy-agent", lon: 104, lat: 1 }, // Singapore
   { name: "your-agent", lon: 140, lat: 36 }, // Tokyo
 ];
+
+/** One second per hop, so the relay's period is the length of the chain. */
+const HOP_SECONDS = 1;
 
 export function AsciiGlobe({ style, stage }: { style: CSSProperties; stage: number }) {
   const land = useRef<HTMLPreElement>(null);
@@ -117,7 +129,10 @@ export function AsciiGlobe({ style, stage }: { style: CSSProperties; stage: numb
               links.current[i] = el;
             }}
             className="link"
-            style={{ animationDelay: `${-i * 0.4}s` }}
+            style={{
+              animationDuration: `1.6s, ${FLEET.length * HOP_SECONDS}s`,
+              animationDelay: `${-i * 0.4}s, ${i * HOP_SECONDS}s`,
+            }}
           />
         ))}
       </svg>
@@ -130,7 +145,14 @@ export function AsciiGlobe({ style, stage }: { style: CSSProperties; stage: numb
               dots.current[i] = el;
             }}
             className={`agent ${stage === 2 ? "chase" : "flicker"}`}
-            style={{ animationDelay: `${stage === 2 ? i : i * 0.7}s` }}
+            style={
+              stage === 2
+                ? {
+                    animationDuration: `${FLEET.length * HOP_SECONDS}s`,
+                    animationDelay: `${i * HOP_SECONDS}s`,
+                  }
+                : { animationDelay: `${i * 0.7}s` }
+            }
           />
         ))}
       </div>
