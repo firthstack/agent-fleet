@@ -120,6 +120,9 @@ beforeEach(async () => {
 });
 
 /** Bring up the gateway, wired exactly the way index.ts wires it. */
+/** Reset per test; one test's limit must not leak into the next. */
+let runLimit = 100;
+
 async function startGateway() {
   // The public base URL has to be the address the agents can actually reach,
   // because every callback URL is built from it.
@@ -134,6 +137,7 @@ async function startGateway() {
   const publicBaseUrl = `http://127.0.0.1:${port}`;
   const driver = createWorkflowDriver({
     store: workflows,
+    maxConcurrentRunsPerTenant: runLimit,
     dispatcher: createWorkflowDispatcher({
       store,
       client: createA2AClient(),
@@ -204,6 +208,9 @@ async function settle(runId: number, maxTicks = 40) {
 
 async function setUpFleet(opts: {
   reviewVerdicts?: Array<"approved" | "request_changes" | "comment">;
+  /** Runs inside the develop stub, so a test can observe how many are at the
+   *  agent simultaneously. */
+  onDevelop?(): Promise<void>;
   developOk?: boolean;
   mergeOk?: boolean;
   /** Leave the merge agent unregistered, so `pr.merge` has nowhere to go. */
@@ -222,6 +229,7 @@ async function setUpFleet(opts: {
     skills: {
       "develop.issue": async () => {
         developCalls += 1;
+        await opts.onDevelop?.();
         return opts.developOk === false
           ? { ok: false, error: "could not push" }
           : { ok: true, prUrl: PR };
@@ -367,6 +375,59 @@ it("fails the run when a step names a skill no agent offers", async () => {
       "requesting_merge",
       "failed",
     ]);
+  }, 60_000);
+
+it("holds a tenant's submissions to its concurrency limit, then lets them through", async () => {
+    // The behaviour a single workflow agent used to give for free by queueing
+    // internally. Moving orchestration into the platform lost it: `POST /runs`
+    // dispatches inside the request, so five submissions were five
+    // simultaneous dispatches at whichever agent serves the first step.
+    runLimit = 2;
+    let inFlight = 0;
+    let peak = 0;
+    const fleet = await setUpFleet({
+      reviewVerdicts: ["approved", "approved", "approved", "approved", "approved"],
+      onDevelop: async () => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 50));
+        inFlight -= 1;
+      },
+    });
+
+    const submitted = await Promise.all(
+      [1, 2, 3, 4, 5].map((n) => startRun(`burst-${n}`)),
+    );
+    expect(submitted.every((r) => r.status === 201)).toBe(true);
+
+    // Three are accepted and recorded, holding no slot and touching no agent.
+    const queued = submitted.filter(
+      (r) => (r.body as { run: { admittedAt: string | null } }).run.admittedAt === null,
+    );
+    expect(queued).toHaveLength(3);
+    expect(peak).toBeLessThanOrEqual(2);
+
+    // Nothing is lost: every one of them runs, as slots free up.
+    for (let i = 0; i < 60; i += 1) {
+      await new Promise((r) => setTimeout(r, 25));
+      await workers!.runOnce();
+      const all = await Promise.all(
+        submitted.map((r) =>
+          workflows.getRun(tenantId, (r.body as { run: { id: number } }).run.id),
+        ),
+      );
+      if (all.every((run) => run && run.state === "completed")) break;
+    }
+
+    const finished = await Promise.all(
+      submitted.map((r) =>
+        workflows.getRun(tenantId, (r.body as { run: { id: number } }).run.id),
+      ),
+    );
+    expect(finished.map((r) => r?.state)).toEqual(Array(5).fill("completed"));
+    expect(fleet.developCalls()).toBe(5);
+    // The whole point: never more than the limit at the agent at once.
+    expect(peak).toBeLessThanOrEqual(2);
   }, 60_000);
 
   it("loops through revision when review asks for changes", async () => {

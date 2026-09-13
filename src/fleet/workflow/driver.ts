@@ -40,6 +40,14 @@ export interface WorkflowRunRecord {
    * it must not dispatch the next step a second time.
    */
   awaitingTaskId: number | null;
+  /**
+   * When the run took one of its tenant's concurrency slots. `null` means it
+   * is accepted but waiting for one — recorded, visible, and not yet costing
+   * any agent anything.
+   */
+  admittedAt?: string | null;
+  /** What it was started with, so a queued run opens exactly as it would have. */
+  inputPayload?: Record<string, unknown>;
 }
 
 export interface WorkflowTaskRecord {
@@ -62,6 +70,13 @@ export interface WorkflowTaskRecord {
 }
 
 export interface WorkflowDriverStore {
+  /**
+   * Take one of the tenant's concurrency slots if one is free. Optional: a
+   * store without it means no limit, which is what every caller had before.
+   */
+  admitRun?(tenantId: number, runId: number, maxConcurrent: number): Promise<boolean>;
+  /** Runs that now hold a slot and still need their opening step dispatched. */
+  claimRunsToStart?(maxConcurrent: number, batchSize: number): Promise<WorkflowRunRecord[]>;
   getDefinition(
     tenantId: number,
     workflowId: number,
@@ -86,6 +101,8 @@ export interface WorkflowDriverStore {
     sourceType: string;
     sourceRef: string;
     createdBy: string;
+    /** Kept so a queued run opens exactly as an immediate one would have. */
+    inputPayload?: Record<string, unknown>;
   }): Promise<WorkflowRunRecord>;
   updateRun(
     runId: number,
@@ -141,6 +158,13 @@ export interface WorkflowDriverDeps {
   stepTimeoutMs?: number;
   maxAdvanceAttempts?: number;
   backoffMs?(attempt: number): number;
+  /**
+   * How many runs one tenant may have in flight. Further submissions are
+   * accepted and held in `queued`, then started in submission order as slots
+   * free up — the behaviour a single workflow agent used to provide by
+   * queueing internally, which moving orchestration into the platform lost.
+   */
+  maxConcurrentRunsPerTenant?: number;
   batchSize?: number;
 }
 
@@ -227,6 +251,9 @@ export function createWorkflowDriver(deps: WorkflowDriverDeps) {
   const now = deps.now ?? (() => new Date());
   const stepTimeout = deps.stepTimeoutMs ?? DEFAULT_STEP_TIMEOUT_MS;
   const maxAttempts = deps.maxAdvanceAttempts ?? 5;
+  // Per tenant, not per agent and not global: one account's burst must not
+  // decide how the platform behaves for everyone else.
+  const maxConcurrent = deps.maxConcurrentRunsPerTenant ?? 10;
   const backoff = deps.backoffMs ?? ((attempt: number) => 30_000 * 2 ** (attempt - 1));
 
   /** Persist a decision, dispatching if it asks for one. */
@@ -419,6 +446,7 @@ export function createWorkflowDriver(deps: WorkflowDriverDeps) {
         sourceType: input.sourceType,
         sourceRef: input.sourceRef,
         createdBy: input.createdBy,
+        inputPayload: input.payload,
       });
       await deps.store.appendRunEvent({
         tenantId: run.tenantId,
@@ -427,7 +455,33 @@ export function createWorkflowDriver(deps: WorkflowDriverDeps) {
         payload: { workflow: input.workflowName, vars: decision.vars },
       });
 
-      return { run: await applyDecision(run, decision), deduplicated: false };
+      // The run is recorded either way. What the slot decides is only whether
+      // an agent hears about it now or in a few seconds.
+      const admitted = deps.store.admitRun
+        ? await deps.store.admitRun(run.tenantId, run.id, maxConcurrent)
+        : true;
+      if (!admitted) {
+        await deps.store.appendRunEvent({
+          tenantId: run.tenantId,
+          runId: run.id,
+          eventType: "queued",
+          payload: { reason: "tenant_at_capacity", limit: maxConcurrent },
+        });
+        deps.logger?.info(
+          { runId: run.id, tenantId: run.tenantId, limit: maxConcurrent },
+          "workflow run queued: the tenant is at its concurrency limit",
+        );
+        return { run, deduplicated: false };
+      }
+
+      // The record was read before the slot was taken, and `applyDecision`
+      // spreads it — without stamping the admission here, a run that is
+      // actually dispatching would report itself as still waiting.
+      const admittedRun = { ...run, admittedAt: now().toISOString() };
+      return {
+        run: await applyDecision(admittedRun, decision),
+        deduplicated: false,
+      };
     },
 
     /** Push one run forward using the result of the step that just finished. */
@@ -482,18 +536,37 @@ export function createWorkflowDriver(deps: WorkflowDriverDeps) {
      * One pass of the driver loop. Shares the notify queue's claim, so a
      * crashed driver's tasks come back on the next pass.
      */
+    /**
+     * Dispatch the opening step of a run that has been holding a slot.
+     *
+     * The decision is recomputed from the payload the run was created with,
+     * not from its stored vars: those are the vars *after* the start
+     * transitions ran, so following them again would apply any `set` on the
+     * matched transition a second time.
+     */
+    async startQueuedRun(run: WorkflowRunRecord): Promise<WorkflowRunRecord | null> {
+      const found = await deps.store.getDefinition(run.tenantId, run.workflowId);
+      if (!found) {
+        throw new WorkflowDriverError(`workflow ${run.workflowId} not found`);
+      }
+      return applyDecision(run, startRun(found.definition, run.inputPayload ?? {}));
+    },
+
     async runOnce(): Promise<{
       advanced: number;
       retried: number;
       abandoned: number;
       /** Runs ended because a step could not be dispatched at all. */
       failed: number;
+      /** Queued runs given a slot and started on this pass. */
+      started: number;
     }> {
       const due = await deps.store.claimWorkflowAdvances(now(), deps.batchSize ?? 20);
       let advanced = 0;
       let retried = 0;
       let abandoned = 0;
       let failed = 0;
+      let started = 0;
 
       for (const task of due) {
         try {
@@ -531,7 +604,38 @@ export function createWorkflowDriver(deps: WorkflowDriverDeps) {
         }
       }
 
-      return { advanced, retried, abandoned, failed };
+      // Draining comes after advancing, so a slot freed by a run finishing in
+      // this same pass is handed to whoever is waiting without a tick's delay.
+      if (deps.store.claimRunsToStart) {
+        const waiting = await deps.store.claimRunsToStart(
+          maxConcurrent,
+          deps.batchSize ?? 20,
+        );
+        for (const run of waiting) {
+          try {
+            await this.startQueuedRun(run);
+            started += 1;
+          } catch (err) {
+            // A queued run whose opening step cannot be dispatched fails the
+            // same way an immediate one does — `applyDecision` has already
+            // written that. Anything else leaves it holding its slot, and the
+            // next pass picks it up again as a stalled admission.
+            if (err instanceof WorkflowRunFailed) {
+              failed += 1;
+              continue;
+            }
+            deps.logger?.error(
+              {
+                runId: run.id,
+                error: err instanceof Error ? err.message : String(err),
+              },
+              "could not start a queued workflow run",
+            );
+          }
+        }
+      }
+
+      return { advanced, retried, abandoned, failed, started };
     },
   };
 }

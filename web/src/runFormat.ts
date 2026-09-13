@@ -10,6 +10,15 @@ export function isTerminal(state: string): boolean {
   return TERMINAL_STATES.includes(state);
 }
 
+/**
+ * Accepted, but holding no concurrency slot yet — nothing has been dispatched
+ * and no agent knows about it. Distinct from `queued` alone, which a run also
+ * passes through in the instant before its opening step goes out.
+ */
+export function isWaitingForSlot(run: { state: string; admittedAt: string | null }): boolean {
+  return run.admittedAt === null && !isTerminal(run.state);
+}
+
 /** `ok` / `bad` / `warn` / `live`, reused for both the run row and its state. */
 export function runTone(state: string): string {
   if (state === "completed") return "ok";

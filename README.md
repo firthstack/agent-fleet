@@ -26,6 +26,10 @@ any single agent:
   DAG cannot express.
 - **Agent work takes minutes to hours.** So nothing holds a connection. Every
   step is a row with a deadline, a callback token and backoff retries.
+- **A burst of submissions is not a burst of work.** Each tenant has a
+  concurrency limit; submissions beyond it are accepted and held in `queued`,
+  then started in order as slots free up. Agents that share state corrupt each
+  other under concurrency rather than merely slowing down.
 - **Discovery has to be scoped.** An agent should find the agents it is allowed
   to find, and nothing else. Tenancy is enforced in routing, not by a
   permission check bolted on afterwards.

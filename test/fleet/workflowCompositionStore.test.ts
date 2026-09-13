@@ -291,3 +291,141 @@ describe("row level security covers the new tables", () => {
     expect(visible).toEqual(["ref-acme"]);
   });
 });
+
+describe("每租户的并发名额", () => {
+  /** 一个已获名额、仍在跑的 run —— 占着一个名额。 */
+  async function liveRun(sourceRef: string) {
+    const run = await makeRun(sourceRef);
+    expect(await workflows.admitRun(tenantId, run.id, 99)).toBe(true);
+    await workflows.updateRun(run.id, {
+      state: "a",
+      status: "a",
+      vars: {},
+    });
+    return run;
+  }
+
+  it("名额没满就放行，满了就不放", async () => {
+    const first = await makeRun("cap-1");
+    expect(await workflows.admitRun(tenantId, first.id, 1)).toBe(true);
+    await workflows.updateRun(first.id, { state: "a", status: "a", vars: {} });
+
+    const second = await makeRun("cap-2");
+    expect(await workflows.admitRun(tenantId, second.id, 1)).toBe(false);
+    // 被挡住的 run 依然在库里，只是没有 admitted_at。
+    expect((await workflows.getRun(tenantId, second.id))?.admittedAt).toBeNull();
+  });
+
+  it("跑完的 run 不再占名额", async () => {
+    const first = await makeRun("done-1");
+    await workflows.admitRun(tenantId, first.id, 1);
+    await workflows.updateRun(first.id, {
+      state: "completed",
+      status: "completed",
+      vars: {},
+    });
+
+    const second = await makeRun("done-2");
+    expect(await workflows.admitRun(tenantId, second.id, 1)).toBe(true);
+  });
+
+  it("并发调用不会双双读到同一个空位", async () => {
+    // 计数与写入在同一个事务里、由租户维度的 advisory lock 串起来。少了它，
+    // 两个网关会同时读到 "0 个在跑" 然后双双放行。
+    await makeRun("race-live");
+    const a = await makeRun("race-a");
+    const b = await makeRun("race-b");
+
+    const [ra, rb] = await Promise.all([
+      workflows.admitRun(tenantId, a.id, 1),
+      workflows.admitRun(tenantId, b.id, 1),
+    ]);
+
+    expect([ra, rb].filter(Boolean)).toHaveLength(1);
+  });
+
+  it("一个租户的用量不影响另一个", async () => {
+    const other = await store.ensureTenant({ slug: "other-tenant", displayName: "Other" });
+    const mine = await makeRun("iso-1");
+    await workflows.admitRun(tenantId, mine.id, 1);
+    await workflows.updateRun(mine.id, { state: "a", status: "a", vars: {} });
+
+    const def = await workflows.putDefinition({
+      tenantId: other.id,
+      name: "demo",
+      version: 1,
+      definition,
+    });
+    const theirs = await workflows.createRun({
+      tenantId: other.id,
+      workflowId: def.id,
+      state: "queued",
+      status: "queued",
+      vars: {},
+      sourceType: "a2a",
+      sourceRef: "iso-other",
+      createdBy: "someone",
+    });
+    expect(await workflows.admitRun(other.id, theirs.id, 1)).toBe(true);
+  });
+
+  it("按提交顺序发名额", async () => {
+    await liveRun("order-live");
+    const b = await makeRun("order-b");
+    const c = await makeRun("order-c");
+
+    // 名额上限 2：在跑 1 个，所以只放得下 1 个。
+    const claimed = await workflows.claimRunsToStart(2, 10);
+
+    expect(claimed.map((r) => r.id)).toEqual([b.id]);
+    expect((await workflows.getRun(tenantId, c.id))?.admittedAt).toBeNull();
+  });
+
+  it("名额满了就一个也不放", async () => {
+    await liveRun("full-live");
+    await makeRun("full-waiting");
+    expect(await workflows.claimRunsToStart(1, 10)).toEqual([]);
+  });
+
+  it("把已拿名额却没派发出去的 run 也一并认领回来", async () => {
+    // 崩溃窗口：admitted_at 先写、派发后做，进程死在中间就留下一个占着名额
+    // 但没人驱动的 run。认领它是让"入场"真正可靠、而不只是乐观的关键。
+    const stalled = await makeRun("stalled-1");
+    await workflows.admitRun(tenantId, stalled.id, 99);
+
+    const claimed = await workflows.claimRunsToStart(99, 10);
+
+    expect(claimed.map((r) => r.id)).toContain(stalled.id);
+  });
+
+  it("把启动时的 payload 原样带回来", async () => {
+    // 排队的 run 要算出与立即启动**完全相同**的起始决策，而 vars 存的是走完
+    // start 转移之后的值，拿它重算会把转移里的 set 应用第二次。
+    const def = await workflows.putDefinition({
+      tenantId,
+      name: "demo",
+      version: 1,
+      definition,
+    });
+    const run = await workflows.createRun({
+      tenantId,
+      workflowId: def.id,
+      state: "queued",
+      status: "queued",
+      vars: { after: "transitions" },
+      sourceType: "a2a",
+      sourceRef: "payload-1",
+      createdBy: "junwen",
+      inputPayload: { requirement: "原始输入" },
+    });
+
+    const claimed = await workflows.claimRunsToStart(99, 10);
+    const mine = claimed.find((r) => r.id === run.id);
+    expect(mine?.inputPayload).toEqual({ requirement: "原始输入" });
+  });
+
+  it("认领数量不超过给定的批量", async () => {
+    for (const ref of ["batch-a", "batch-b", "batch-c"]) await makeRun(ref);
+    expect(await workflows.claimRunsToStart(99, 2)).toHaveLength(2);
+  });
+});

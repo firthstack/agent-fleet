@@ -227,6 +227,9 @@ export interface WorkflowRun {
   sourceRef: string;
   /** The step the run is sitting on, or null when nothing is in flight. */
   awaitingTaskId: number | null;
+  /** When it took one of the tenant's concurrency slots. `null` means it is
+   *  accepted and waiting for one — nothing has been dispatched yet. */
+  admittedAt: string | null;
   updatedAt: string | null;
 }
 

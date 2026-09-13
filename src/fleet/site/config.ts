@@ -1,5 +1,7 @@
 export interface FleetConfig {
   port: number;
+  /** How many workflow runs one tenant may have in flight at once. */
+  maxConcurrentRunsPerTenant: number;
 }
 
 /**
@@ -20,5 +22,14 @@ export function loadFleetConfig(env: NodeJS.ProcessEnv = process.env): FleetConf
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error(`FLEET_PORT must be a valid TCP port, got ${portRaw}`);
   }
-  return { port };
+  const limitRaw = env.FLEET_MAX_CONCURRENT_RUNS_PER_TENANT?.trim() || "10";
+  const maxConcurrentRunsPerTenant = Number.parseInt(limitRaw, 10);
+  if (!Number.isInteger(maxConcurrentRunsPerTenant) || maxConcurrentRunsPerTenant < 1) {
+    throw new Error(
+      "FLEET_MAX_CONCURRENT_RUNS_PER_TENANT must be a positive integer, got " +
+        limitRaw,
+    );
+  }
+
+  return { port, maxConcurrentRunsPerTenant };
 }

@@ -230,7 +230,15 @@ export interface FleetWorkerHandle {
 export function startFleetWorkers(opts: {
   store: CallbackStorePort;
   /** Advances composition-layer runs whose step just finished. */
-  workflowDriver?: { runOnce(): Promise<{ advanced: number; retried: number; abandoned: number }> };
+  workflowDriver?: {
+    runOnce(): Promise<{
+      advanced: number;
+      retried: number;
+      abandoned: number;
+      failed?: number;
+      started?: number;
+    }>;
+  };
   /**
    * Drives the registration health sweep (docs §5 step 5). Omit it and agent
    * health is only ever written once, at registration — `refresh()` exists
@@ -275,7 +283,11 @@ export function startFleetWorkers(opts: {
       sent.delivered > 0 ||
       sent.retried > 0 ||
       driven.advanced > 0 ||
-      driven.abandoned > 0
+      driven.abandoned > 0 ||
+      (driven.failed ?? 0) > 0 ||
+      // A pass that only let a queued run through is still the interesting
+      // kind of pass: it is where a tenant's backlog actually moves.
+      (driven.started ?? 0) > 0
     ) {
       opts.logger?.info(
         { ...swept, ...sent, workflow: driven },
