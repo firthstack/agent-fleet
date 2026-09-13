@@ -32,6 +32,8 @@ interface RunRow {
   source_type: string;
   source_ref: string;
   awaiting_task_id: string | null;
+  admitted_at: Date | null;
+  input_payload: Record<string, unknown> | null;
   updated_at: Date;
 }
 
@@ -47,7 +49,8 @@ interface TaskRow {
 
 const RUN_COLUMNS = `
   id, tenant_id, workflow_id, state, status, reason, vars,
-  source_type, source_ref, awaiting_task_id, updated_at
+  source_type, source_ref, awaiting_task_id, admitted_at, input_payload,
+  updated_at
 `;
 
 function toRun(row: RunRow): WorkflowRunRecord {
@@ -62,6 +65,8 @@ function toRun(row: RunRow): WorkflowRunRecord {
     sourceType: row.source_type,
     sourceRef: row.source_ref,
     awaitingTaskId: row.awaiting_task_id === null ? null : Number(row.awaiting_task_id),
+    admittedAt: row.admitted_at === null ? null : row.admitted_at.toISOString(),
+    inputPayload: row.input_payload ?? {},
     updatedAt: row.updated_at.toISOString(),
   };
 }
@@ -79,6 +84,13 @@ function toTask(row: TaskRow): WorkflowTaskRecord {
     attempt: row.attempt,
   };
 }
+
+/** Terminal states, as a SQL literal list. Kept beside the queries that use
+ *  it so the two cannot drift. */
+const TERMINAL_STATE_LIST = "'completed', 'failed', 'cancelled', 'needs_human'";
+
+/** Advisory-lock namespace for "one tenant's concurrency slots". */
+const RUN_SLOT_LOCK = 0x5f1ee7;
 
 export class WorkflowStore implements WorkflowDriverStore {
   constructor(private readonly deps: WorkflowStoreDeps) {}
@@ -198,13 +210,16 @@ export class WorkflowStore implements WorkflowDriverStore {
     sourceType: string;
     sourceRef: string;
     createdBy: string;
+    /** What the run was started with, kept so a queued run can compute the
+     *  same opening decision later that it would have computed now. */
+    inputPayload?: Record<string, unknown>;
   }): Promise<WorkflowRunRecord> {
     return this.deps.withTenant(input.tenantId, async (client) => {
       const { rows } = await client.query<RunRow>(
         `INSERT INTO fleet_workflow_runs
            (tenant_id, workflow_id, state, status, vars,
-            source_type, source_ref, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            source_type, source_ref, created_by, input_payload)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING ${RUN_COLUMNS}`,
         [
           input.tenantId,
@@ -215,10 +230,134 @@ export class WorkflowStore implements WorkflowDriverStore {
           input.sourceType,
           input.sourceRef,
           input.createdBy,
+          JSON.stringify(input.inputPayload ?? {}),
         ],
       );
       return toRun(rows[0]);
     });
+  }
+
+  /**
+   * Take one of the tenant's concurrency slots, if there is a free one.
+   *
+   * The count and the write happen under an advisory lock keyed on the tenant,
+   * so two gateways admitting at the same moment cannot both read "4 live" and
+   * both go to 5. The lock is transaction-scoped and held only across two
+   * cheap statements — never across a dispatch.
+   */
+  async admitRun(
+    tenantId: number,
+    runId: number,
+    maxConcurrent: number,
+  ): Promise<boolean> {
+    const client = await this.deps.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock($1, $2)", [
+        RUN_SLOT_LOCK,
+        tenantId,
+      ]);
+      const { rows } = await client.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM fleet_workflow_runs
+         WHERE tenant_id = $1 AND admitted_at IS NOT NULL
+           AND state NOT IN (${TERMINAL_STATE_LIST})`,
+        [tenantId],
+      );
+      if (Number(rows[0].n) >= maxConcurrent) {
+        await client.query("COMMIT");
+        return false;
+      }
+      await client.query(
+        `UPDATE fleet_workflow_runs SET admitted_at = now(), updated_at = now()
+         WHERE id = $1 AND tenant_id = $2 AND admitted_at IS NULL`,
+        [runId, tenantId],
+      );
+      await client.query("COMMIT");
+      return true;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Runs the driver should start now: ones that have just been given a slot,
+   * plus any that hold a slot but never got dispatched.
+   *
+   * That second group is the crash window. `admitted_at` is written before the
+   * dispatch, so a process that dies in between leaves a run holding a slot
+   * with nothing driving it — the same shape of stranding this whole feature
+   * exists to avoid. Re-driving them is what makes the admission durable
+   * rather than merely optimistic.
+   */
+  async claimRunsToStart(
+    maxConcurrent: number,
+    batchSize: number,
+  ): Promise<WorkflowRunRecord[]> {
+    const client = await this.deps.pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Already holding a slot and still sitting in `queued`.
+      const stalled = await client.query<RunRow>(
+        `SELECT ${RUN_COLUMNS} FROM fleet_workflow_runs
+         WHERE state = 'queued' AND admitted_at IS NOT NULL
+         ORDER BY id
+         LIMIT $1
+         FOR UPDATE SKIP LOCKED`,
+        [batchSize],
+      );
+
+      const claimed = stalled.rows.map(toRun);
+      if (claimed.length >= batchSize) {
+        await client.query("COMMIT");
+        return claimed;
+      }
+
+      // Tenants with something waiting, and how much of their limit is free.
+      const { rows: tenants } = await client.query<{ tenant_id: string; live: string }>(
+        `SELECT q.tenant_id,
+                (SELECT count(*) FROM fleet_workflow_runs a
+                  WHERE a.tenant_id = q.tenant_id
+                    AND a.admitted_at IS NOT NULL
+                    AND a.state NOT IN (${TERMINAL_STATE_LIST}))::text AS live
+         FROM (SELECT DISTINCT tenant_id FROM fleet_workflow_runs
+               WHERE admitted_at IS NULL) q`,
+      );
+
+      for (const row of tenants) {
+        const tenantId = Number(row.tenant_id);
+        const free = Math.min(
+          maxConcurrent - Number(row.live),
+          batchSize - claimed.length,
+        );
+        if (free <= 0) continue;
+        const { rows: waiting } = await client.query<RunRow>(
+          `UPDATE fleet_workflow_runs SET admitted_at = now(), updated_at = now()
+           WHERE id IN (
+             SELECT id FROM fleet_workflow_runs
+             WHERE tenant_id = $1 AND admitted_at IS NULL
+             ORDER BY id
+             LIMIT $2
+             FOR UPDATE SKIP LOCKED
+           )
+           RETURNING ${RUN_COLUMNS}`,
+          [tenantId, free],
+        );
+        claimed.push(...waiting.map(toRun));
+        if (claimed.length >= batchSize) break;
+      }
+
+      await client.query("COMMIT");
+      return claimed;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   async updateRun(

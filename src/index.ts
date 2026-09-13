@@ -42,6 +42,10 @@ async function main(): Promise<void> {
   const driver = createWorkflowDriver({
     store: workflows,
     logger: log,
+    // Submissions beyond this are accepted and held in `queued`, then started
+    // in order as slots free up. Without it a burst of submissions is a burst
+    // of simultaneous dispatches at whatever agent serves the first step.
+    maxConcurrentRunsPerTenant: cfg.maxConcurrentRunsPerTenant,
     dispatcher: createWorkflowDispatcher({
       store,
       client: createA2AClient(),

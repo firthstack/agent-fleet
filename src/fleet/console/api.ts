@@ -469,6 +469,9 @@ function runView(run: WorkflowRunRecord): Record<string, unknown> {
     sourceType: run.sourceType,
     sourceRef: run.sourceRef,
     awaitingTaskId: run.awaitingTaskId,
+    // `null` means accepted but waiting for one of the tenant's concurrency
+    // slots — recorded and visible, and not yet costing any agent anything.
+    admittedAt: run.admittedAt ?? null,
     updatedAt: run.updatedAt ?? null,
   };
 }

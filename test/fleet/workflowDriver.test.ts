@@ -41,6 +41,8 @@ function harness(
     failFrom?: number;
     /** Injected failures carry this code instead of being a generic error. */
     dispatchCode?: "no_agent" | "ambiguous_agent" | "dispatch_failed";
+    /** Turn on the per-tenant concurrency limit. */
+    maxConcurrent?: number;
   } = {},
 ) {
   const runs = new Map<number, WorkflowRunRecord>();
@@ -81,6 +83,8 @@ function harness(
     },
     async createRun(input) {
       const run: WorkflowRunRecord = {
+        admittedAt: null,
+        inputPayload: input.inputPayload ?? {},
         id: nextRunId++,
         tenantId: input.tenantId,
         workflowId: input.workflowId,
@@ -122,6 +126,40 @@ function harness(
       for (const task of due) task.attempt += 1;
       return due;
     },
+    async admitRun(tenantId, runId, limit) {
+      const live = [...runs.values()].filter(
+        (r) =>
+          r.tenantId === tenantId &&
+          r.admittedAt != null &&
+          !["completed", "failed", "cancelled", "needs_human"].includes(r.state),
+      ).length;
+      if (live >= limit) return false;
+      const run = runs.get(runId);
+      if (run) run.admittedAt = clock.toISOString();
+      return true;
+    },
+    async claimRunsToStart(limit, batch) {
+      const out: WorkflowRunRecord[] = [];
+      // Admitted but never dispatched — the crash window.
+      for (const r of runs.values()) {
+        if (r.state === "queued" && r.admittedAt != null) out.push(r);
+      }
+      const waiting = [...runs.values()]
+        .filter((r) => r.admittedAt == null)
+        .sort((a, b) => a.id - b.id);
+      for (const r of waiting) {
+        const live = [...runs.values()].filter(
+          (x) =>
+            x.tenantId === r.tenantId &&
+            x.admittedAt != null &&
+            !["completed", "failed", "cancelled", "needs_human"].includes(x.state),
+        ).length;
+        if (live >= limit || out.length >= batch) break;
+        r.admittedAt = clock.toISOString();
+        out.push(r);
+      }
+      return out.slice(0, batch);
+    },
     async markNotified(taskId) {
       notified.push(taskId);
     },
@@ -137,6 +175,9 @@ function harness(
     store,
     now: () => clock,
     maxAdvanceAttempts: 2,
+    ...(opts.maxConcurrent === undefined
+      ? {}
+      : { maxConcurrentRunsPerTenant: opts.maxConcurrent }),
     dispatcher: {
       async dispatch(input) {
         dispatchCount += 1;
@@ -163,6 +204,16 @@ function harness(
     },
   });
 
+  /** An agent finishes one named step. Needed wherever a tick can also start
+   *  a queued run, which moves "the most recent dispatch" out from under a
+   *  test that meant the previous one. */
+  async function agentRepliesTo(taskId: number, result: unknown) {
+    const task = tasks.get(taskId)!;
+    task.state = "done_pending_notify";
+    task.result = { state: "completed", result };
+    return driver.runOnce();
+  }
+
   /** An agent finishes the most recent step, then the driver picks it up. */
   async function agentReplies(result: unknown, state = "done_pending_notify") {
     const last = dispatched[dispatched.length - 1];
@@ -182,6 +233,8 @@ function harness(
     retries,
     abandoned,
     agentReplies,
+    agentRepliesTo,
+    dispatchesFor: (runId: number) => dispatched.filter((d) => d.workflowRunId === runId),
     last: () => dispatched[dispatched.length - 1],
     advanceClock: (ms: number) => {
       clock = new Date(clock.getTime() + ms);
@@ -234,7 +287,7 @@ describe("driving the real workflow end to end", () => {
     ]);
     // Every step was marked handled, so nothing is reclaimed on the next pass.
     expect(h.notified).toHaveLength(3);
-    expect(await h.driver.runOnce()).toEqual({ advanced: 0, retried: 0, abandoned: 0, failed: 0 });
+    expect(await h.driver.runOnce()).toEqual({ advanced: 0, retried: 0, abandoned: 0, failed: 0, started: 0 });
   });
 
   it("loops through revision and comes back to review with the new PR", async () => {
@@ -549,7 +602,7 @@ describe("a step that can never be dispatched", () => {
     h.advanceClock(60 * 60_000);
     const again = await h.driver.runOnce();
 
-    expect(again).toEqual({ advanced: 0, retried: 0, abandoned: 0, failed: 0 });
+    expect(again).toEqual({ advanced: 0, retried: 0, abandoned: 0, failed: 0, started: 0 });
     expect([...h.runs.values()][0].state).toBe("failed");
   });
 
@@ -579,5 +632,127 @@ describe("a step that can never be dispatched", () => {
     const result = await h.agentReplies({ ok: true, prUrl: "https://pr/1" });
     expect(result.retried).toBe(1);
     expect(result.failed).toBe(0);
+  });
+});
+
+describe("每租户的并发上限", () => {
+  /**
+   * 把编排搬进平台之前，单个 workflow agent 内部排队，顺带给了整个 fleet 一个
+   * 并发上限。搬进来之后那个上限消失了：POST /runs 在请求内同步派发，五个提交
+   * 就是五个立即派发。
+   *
+   * 这里要成立的是：超出上限的提交仍然被受理和记录，只是先不派发；名额腾出来
+   * 之后按提交顺序自己开跑。
+   */
+
+  it("超过上限的 run 被受理但不派发", async () => {
+    const h = harness({ maxConcurrent: 1 });
+
+    const first = await startFeature(h, "task-1");
+    const second = await startFeature(h, "task-2");
+
+    expect(first.run.state).toBe("developing");
+    // 已获名额的 run 必须如实报告：记录是在取得名额之前读出来的，忘了盖这个
+    // 戳，一个正在派发的 run 会把自己报成还在排队。
+    expect(first.run.admittedAt).not.toBeNull();
+    // 第二个建出来了、能查到、有 sourceRef——只是还没人被打扰。
+    expect(second.run.state).toBe("queued");
+    expect(second.run.admittedAt).toBeNull();
+    expect(h.dispatched).toHaveLength(1);
+  });
+
+  it("排队不是丢弃：run 有记录，时间线说明了为什么停着", async () => {
+    const h = harness({ maxConcurrent: 1 });
+    await startFeature(h, "task-1");
+    const second = await startFeature(h, "task-2");
+
+    expect([...h.runs.values()]).toHaveLength(2);
+    expect(
+      h.events.filter((e) => e.runId === second.run.id).map((e) => e.eventType),
+    ).toEqual(["created", "queued"]);
+  });
+
+  it("名额腾出来之后自己开跑", async () => {
+    const h = harness({ maxConcurrent: 1 });
+    const first = await startFeature(h, "task-1");
+    const second = await startFeature(h, "task-2");
+    expect(h.dispatched).toHaveLength(1);
+
+    // 第一个走完整条流程。每一步都指名回复：排空发生在推进之后的同一跳里，
+    // "最后一次派发"随时可能已经是别的 run 的了。
+    const step = (n: number) => h.dispatchesFor(first.run.id)[n].taskId;
+    await h.agentRepliesTo(step(0), { ok: true, prUrl: "https://pr/1" });
+    await h.agentRepliesTo(step(1), { ok: true, verdict: "approved", reviewUrl: "https://r/1" });
+    const tick = await h.agentRepliesTo(step(2), { ok: true, slackMessageTs: "1.2" });
+
+    expect(h.runs.get(first.run.id)?.state).toBe("completed");
+    // 名额是在同一跳里交接的——排空排在推进之后，正是为了不让它白等一跳。
+    expect(tick.started).toBe(1);
+    expect(h.runs.get(second.run.id)?.state).toBe("developing");
+  });
+
+  it("按提交顺序发名额，不是随便挑一个", async () => {
+    const h = harness({ maxConcurrent: 1 });
+    await startFeature(h, "task-1");
+    const b = await startFeature(h, "task-2");
+    const c = await startFeature(h, "task-3");
+    const d = await startFeature(h, "task-4");
+    expect([b, c, d].every((r) => r.run.state === "queued")).toBe(true);
+
+    const first = [...h.runs.values()][0];
+    const step = (n: number) => h.dispatchesFor(first.id)[n].taskId;
+    await h.agentRepliesTo(step(0), { ok: true, prUrl: "https://pr/1" });
+    await h.agentRepliesTo(step(1), { ok: true, verdict: "approved", reviewUrl: "https://r/1" });
+    await h.agentRepliesTo(step(2), { ok: true, slackMessageTs: "1.2" });
+
+    // 先来的先走。乱序会让"我第一个提交的"变成最后才跑。
+    expect(h.runs.get(b.run.id)?.state).toBe("developing");
+    expect(h.runs.get(c.run.id)?.state).toBe("queued");
+    expect(h.runs.get(d.run.id)?.state).toBe("queued");
+  });
+
+  it("一次只放行到上限为止，不是把队列一口气倒出来", async () => {
+    const h = harness({ maxConcurrent: 3 });
+    for (const ref of ["a", "b", "c", "d", "e"]) await startFeature(h, ref);
+
+    // 三个立刻跑，两个等着。
+    expect(h.dispatched).toHaveLength(3);
+    expect([...h.runs.values()].filter((r) => r.admittedAt == null)).toHaveLength(2);
+
+    const tick = await h.driver.runOnce();
+    // 名额仍然满着，所以这一跳什么也放不出来。
+    expect(tick.started).toBe(0);
+  });
+
+  it("上限只管自己的租户", async () => {
+    const h = harness({ maxConcurrent: 1 });
+    await startFeature(h, "task-1");
+    // 另一个租户的提交不该被别人的用量挡住。
+    const other = await h.driver.start({
+      tenantId: 99,
+      workflowName: "develop-review-merge",
+      payload: { requirement: "别的租户" },
+      createdBy: "user:other",
+      sourceType: "console",
+      sourceRef: "other-1",
+    });
+    expect(other.run.state).toBe("developing");
+    expect(h.dispatched).toHaveLength(2);
+  });
+
+  it("已拿到名额却没派发出去的 run，下一跳会被重新驱动", async () => {
+    // 崩溃窗口：admitted_at 写在派发之前，进程死在中间就会留下一个占着名额、
+    // 却没有任何东西在驱动的 run——正是这个特性要消灭的那种搁浅。
+    const h = harness({ maxConcurrent: 2 });
+    const run = await startFeature(h, "task-1");
+    const record = h.runs.get(run.run.id)!;
+    record.state = "queued";
+    record.status = "queued";
+    h.dispatched.length = 0;
+
+    const tick = await h.driver.runOnce();
+
+    expect(tick.started).toBe(1);
+    expect(h.dispatched).toHaveLength(1);
   });
 });

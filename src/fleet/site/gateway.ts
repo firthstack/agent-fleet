@@ -203,6 +203,8 @@ function runJson(run: WorkflowRunRecord): Record<string, unknown> {
     vars: run.vars,
     sourceType: run.sourceType,
     sourceRef: run.sourceRef,
+    /** `null` while the run waits for one of the tenant's concurrency slots. */
+    admittedAt: run.admittedAt ?? null,
     updatedAt: run.updatedAt ?? null,
   };
 }
