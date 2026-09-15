@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, type MouseEvent, type RefObject } from "react";
 import { Link } from "react-router-dom";
 import { AsciiGlobe } from "../components/AsciiGlobe.tsx";
-import { cameraAt, progressOf, stageFor } from "../landingCamera.ts";
+import { cameraAt } from "../landingCamera.ts";
 import { PRODUCT_NAME } from "../product.ts";
 import { BOX, LOOP, TIMELINE, VIEWBOX, boxY, loopLabelY, loopPath } from "../traceGraph.ts";
 import "../landing.css";
@@ -22,7 +22,7 @@ import "../landing.css";
 
 const HOPS = [
   { n: "1", what: "your workflow asks for a step", t: "message/send" },
-  { n: "2", what: "Fleet routes it to the agent with that skill", t: "message/send" },
+  { n: "2", what: "yourfleet.run routes it to the agent with that skill", t: "message/send" },
   {
     n: "3",
     what: "the agent works — minutes, or hours — then calls back",
@@ -95,45 +95,140 @@ function stars(seed: number, count: number) {
 }
 
 /**
- * Scroll progress, 0 → 1 over the page, plus the stop it lands in.
+ * Scroll-driven camera that stays out of React's render loop.
  *
  * A rAF-throttled listener rather than a scroll-linked CSS timeline:
  * `animation-timeline` is still missing from enough browsers that the page
  * would simply not move for a share of visitors, and a landing page that
  * silently loses its one idea is worse than one that costs a listener.
  */
-function useScrollCamera(stops: number) {
-  const [progress, setProgress] = useState(0);
+function useScrollCamera(root: RefObject<HTMLDivElement | null>) {
   const frame = useRef(0);
 
   useEffect(() => {
+    const site = root.current;
+    if (!site) return;
+
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let current = 0;
+    let target = current;
+    let lastStage = -1;
+    let anchors: Array<{ y: number; progress: number }> = [];
+    let stageTops: number[] = [];
+
+    const measure = () => {
+      const ids = ["connect", "compose", "trace", "protocol"];
+      const progress = [0.26, 0.5, 0.76, 1];
+      const lead = window.innerHeight * 0.24;
+      stageTops = ids.map((id) => {
+        const el = document.getElementById(id);
+        return el ? el.getBoundingClientRect().top + window.scrollY : 0;
+      });
+      anchors = [
+        { y: 0, progress: 0 },
+        ...stageTops.map((y, i) => ({ y: Math.max(1, y - lead), progress: progress[i] })),
+      ];
+    };
+
+    const narrativeProgress = (scrollY: number) => {
+      if (anchors.length < 2) return 0;
+      let i = 0;
+      while (i < anchors.length - 2 && scrollY > anchors[i + 1].y) i += 1;
+      const a = anchors[i];
+      const b = anchors[i + 1];
+      const t = Math.min(1, Math.max(0, (scrollY - a.y) / Math.max(1, b.y - a.y)));
+      return a.progress + (b.progress - a.progress) * t;
+    };
+
+    const activeStage = (scrollY: number) => {
+      const probe = scrollY + window.innerHeight * 0.42;
+      let stage = 0;
+      stageTops.forEach((top, i) => {
+        if (probe >= top) stage = i + 1;
+      });
+      return stage;
+    };
+
+    const paint = (progress: number) => {
+      const cam = cameraAt(progress);
+      const stage = activeStage(window.scrollY);
+      site.style.setProperty("--p", progress.toFixed(4));
+      site.style.setProperty("--camera-x", `${cam.x.toFixed(3)}vw`);
+      site.style.setProperty("--camera-y", `${cam.y.toFixed(3)}vh`);
+      site.style.setProperty("--camera-scale", (cam.size / 100).toFixed(4));
+      site.style.setProperty("--space-x", `${(-progress * 3).toFixed(3)}vw`);
+      site.style.setProperty("--space-y", `${(-progress * 5).toFixed(3)}vh`);
+      site.style.setProperty("--grid-y", `${(progress * 5).toFixed(3)}vh`);
+      site.style.setProperty("--deep-y", `${(-progress * 2.5).toFixed(3)}vh`);
+      site.style.setProperty("--deep-opacity", (0.25 + progress * 0.75).toFixed(3));
+      site.style.setProperty("--grid-opacity", (0.04 + progress * 0.11).toFixed(3));
+      // Cross-fade the close horizon into the ASCII globe instead of changing
+      // both at a stage boundary. The latter was the most visible "snap" in
+      // the original camera move.
+      const reveal = Math.min(1, Math.max(0, (progress - 0.075) / 0.09));
+      site.style.setProperty("--globe-reveal", reveal.toFixed(3));
+      site.style.setProperty("--horizon-reveal", (1 - reveal).toFixed(3));
+      if (stage !== lastStage) {
+        site.dataset.stage = String(stage);
+        lastStage = stage;
+      }
+    };
+
+    const animate = () => {
+      // A short ease-out absorbs the coarse jumps produced by trackpads and
+      // wheel events, but stops quickly enough to keep the scene attached to
+      // the reader's hand.
+      current += (target - current) * 0.16;
+      if (Math.abs(target - current) < 0.00015) current = target;
+      paint(current);
+      if (current !== target) frame.current = window.requestAnimationFrame(animate);
+      else frame.current = 0;
+    };
+
     const read = () => {
-      frame.current = 0;
-      setProgress(
-        progressOf(
-          window.scrollY,
-          document.documentElement.scrollHeight,
-          window.innerHeight,
-        ),
-      );
+      target = narrativeProgress(window.scrollY);
+      if (still) {
+        current = target;
+        paint(current);
+      } else if (!frame.current) {
+        frame.current = window.requestAnimationFrame(animate);
+      }
     };
-    const onScroll = () => {
-      if (frame.current) return;
-      frame.current = window.requestAnimationFrame(read);
-    };
-    read();
+
+    measure();
+    current = narrativeProgress(window.scrollY);
+    target = current;
+    paint(current);
     window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onScroll);
+    const onResize = () => {
+      measure();
+      read();
+    };
+    window.addEventListener("resize", onResize);
+
+    const sections = Array.from(site.querySelectorAll<HTMLElement>(".stop"));
+    const reveal = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) (entry.target as HTMLElement).dataset.revealed = "true";
+        });
+      },
+      { rootMargin: "0px 0px -12%", threshold: 0.12 },
+    );
+    sections.forEach((section) => reveal.observe(section));
+    site.dataset.motionReady = "true";
+
+    function onScroll() {
+      read();
+    }
+
     return () => {
       window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", onScroll);
+      window.removeEventListener("resize", onResize);
+      reveal.disconnect();
       if (frame.current) window.cancelAnimationFrame(frame.current);
     };
-  }, []);
-
-  const stage = useMemo(() => stageFor(progress, stops), [progress, stops]);
-
-  return { progress, stage };
+  }, [root]);
 }
 
 /**
@@ -153,31 +248,20 @@ function jumpTo(event: MouseEvent<HTMLAnchorElement>, id: string) {
   const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   target.scrollIntoView({ behavior: still ? "auto" : "smooth", block: "start" });
   // scrollIntoView moves the page but not the caret. Without this a keyboard
-  // user is scrolled to the stop and then tabs on from the top of the page.
   target.focus({ preventScroll: true });
 }
 
 export function Landing() {
-  const { progress, stage } = useScrollCamera(4);
-  const cam = cameraAt(progress);
-  // The globe and everything riding it share one box, so a dot placed at 24%
-  // stays at 24% of the globe whatever the camera is doing.
-  const globe = {
-    left: `${cam.x}vw`,
-    top: `${cam.y}vh`,
-    width: `${cam.size}vh`,
-    height: `${cam.size}vh`,
-  } as const;
-  const near = useMemo(() => stars(11, 70), []);
-  const far = useMemo(() => stars(97, 110), []);
+  const root = useRef<HTMLDivElement>(null);
+  useScrollCamera(root);
+  const near = useMemo(() => stars(11, 48), []);
+  const far = useMemo(() => stars(97, 72), []);
 
   return (
-    <div
-      className="site"
-      data-stage={stage}
-      style={{ ["--p" as string]: progress.toFixed(4) }}
-    >
+    <div className="site" data-stage="0" ref={root}>
       <div className="scene" aria-hidden="true">
+        <div className="space-haze" />
+        <div className="space-grid" />
         <div className="starfield">
           {near.map((s, i) => (
             <span
@@ -214,8 +298,8 @@ export function Landing() {
         </div>
 
         {/* the hero's horizon, handed over to the globe as the camera pulls out */}
-        <div className="horizon" style={globe} />
-        <AsciiGlobe style={globe} stage={stage} />
+        <div className="horizon" />
+        <AsciiGlobe />
 
         {/* 03 — the state graph laid out in time, in the freed right half */}
         <div className="stage s-trace">
@@ -297,7 +381,7 @@ export function Landing() {
 
       <div className="site-body">
         <nav className="site-nav">
-          <span className="wordmark">{PRODUCT_NAME}</span>
+          <span className="wordmark"><i />{PRODUCT_NAME}</span>
           <span className="spacer" />
           <div className="links">
             <a href="https://github.com/firthstack/agent-fleet">Docs</a>
@@ -310,14 +394,14 @@ export function Landing() {
         </nav>
 
         <section className="stop centred hero">
-          <div>
-            <p className="eyebrow quiet">multi-tenant A2A gateway</p>
-            <div className="wordmark-hero">
+          <div className="stop-copy">
+            <p className="eyebrow quiet"><span className="live-dot" /> A2A orchestration layer · online</p>
+            <h1 className="wordmark-hero">
               yourfleet<span className="run">.run</span>
-            </div>
+            </h1>
             <p className="blurb">
-              Point Fleet at any agent that speaks A2A. It does the routing, the retries and
-              the record.
+              Connect any agent. Compose them into real workflows. See every handoff,
+              retry, and blocker as the work unfolds.
             </p>
             <div className="four-words">
               {WORDS.map((word) => (
@@ -334,15 +418,23 @@ export function Landing() {
                 Read the docs
               </a>
             </div>
+            <div className="hero-signal" aria-label="Product capabilities">
+              <span><b>∞</b> agents</span>
+              <span><b>↳</b> workflows</span>
+              <span><b>◎</b> live traces</span>
+            </div>
+            <a className="scroll-cue" href="#connect" onClick={(e) => jumpTo(e, "connect")}>
+              <span>scroll to explore</span><i />
+            </a>
           </div>
         </section>
 
         <section className="stop" id="connect" tabIndex={-1}>
-          <div>
+          <div className="stop-copy">
             <p className="eyebrow">01 — connect</p>
             <h2>Every agent you have, in one place.</h2>
             <p className="blurb">
-              Paste a URL. Fleet fetches the card, records the skills it advertises, and hands
+              Paste a URL. yourfleet.run fetches the card, records the skills it advertises, and hands
               back one inbound token. Any language, any host.
             </p>
             <div className="artifact">
@@ -359,11 +451,11 @@ export function Landing() {
         </section>
 
         <section className="stop" id="compose" tabIndex={-1}>
-          <div>
+          <div className="stop-copy">
             <p className="eyebrow">02 — compose</p>
             <h2>Then give them an order to work in.</h2>
             <p className="blurb">
-              A state graph Fleet owns, not code buried in one agent. Review asks for changes
+              A state graph yourfleet.run owns, not code buried in one agent. Review asks for changes
               and the work goes back round — the shape a straight pipeline cannot express.
             </p>
             <div className="artifact">
@@ -383,7 +475,7 @@ export function Landing() {
         </section>
 
         <section className="stop" id="trace" tabIndex={-1}>
-          <div>
+          <div className="stop-copy">
             <p className="eyebrow">03 — trace</p>
             <h2>Watch the whole fleet at once.</h2>
             <p className="blurb">
@@ -407,12 +499,12 @@ export function Landing() {
         </section>
 
         <section className="stop" id="protocol" tabIndex={-1}>
-          <div>
+          <div className="stop-copy">
             <p className="eyebrow">04 — protocol</p>
             <h2>Standard A2A. Nothing to install.</h2>
             <p className="blurb">
               Both ends of every hop speak standard{" "}
-              <a href="https://a2a-protocol.org">A2A</a>. Fleet is an A2A server facing callers
+              <a href="https://a2a-protocol.org">A2A</a>. yourfleet.run is an A2A server facing callers
               and an A2A client facing your agents — so you keep whatever library you already
               use.
             </p>
@@ -433,8 +525,9 @@ export function Landing() {
         </section>
 
         <section className="stop centred">
-          <div>
-            <h2>Point it at one agent.</h2>
+          <div className="stop-copy final-callout">
+            <p className="eyebrow">ready when your agents are</p>
+            <h2>One fleet. Any agent. Real work.</h2>
             <p className="blurb">
               A URL, a card, and a token shown once. The second agent is where it starts paying
               off.
