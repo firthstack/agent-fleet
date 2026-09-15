@@ -4,35 +4,43 @@ import { listAgents, type Agent } from "../api.ts";
 import { HealthPill, Shell } from "../components/Shell.tsx";
 import { ago, lastRunSummary } from "../runFormat.ts";
 
-/** The run counts a card shows: how much it has done, and whether any of it
- *  is still in flight (title captures both — issue #3). */
-function AgentStats({ stats }: { stats: Agent["stats"] }) {
-  if (stats.totalRuns === 0) {
-    return <p className="row-sub">no runs yet</p>;
-  }
+function AgentActivity({ stats }: { stats: Agent["stats"] }) {
   const lastRun = lastRunSummary(stats.lastRunStartedAt, stats.lastRunEndedAt);
+  if (stats.totalRuns === 0) {
+    return (
+      <span className="registry-activity quiet">
+        <strong>no runs</strong>
+        <small>ready for work</small>
+      </span>
+    );
+  }
+
   return (
-    <>
-      <p className="row-sub agent-stats" title="Snapshot as of page load — refresh to update">
-        <span>{stats.totalRuns} run{stats.totalRuns === 1 ? "" : "s"}</span>
-        {stats.succeeded > 0 ? <span className="pill ok">{stats.succeeded} ok</span> : null}
-        {stats.failed > 0 ? <span className="pill bad">{stats.failed} failed</span> : null}
-        {stats.running > 0 ? (
-          <span className="pill live" title={stats.runningSince ?? ""}>
-            {stats.running} running{stats.runningSince ? ` · ${ago(stats.runningSince)}` : ""}
-          </span>
-        ) : null}
-      </p>
-      {lastRun ? (
-        <p className="row-sub" title={lastRun.title}>
-          {lastRun.text}
-        </p>
-      ) : null}
-    </>
+    <span className="registry-activity" title="Snapshot as of page load — refresh to update">
+      <strong className={stats.running > 0 ? "live" : stats.failed > 0 ? "warn" : ""}>
+        {stats.running > 0
+          ? `${stats.running} running`
+          : `${stats.totalRuns} run${stats.totalRuns === 1 ? "" : "s"}`}
+      </strong>
+      <small title={lastRun?.title}>
+        {stats.failed > 0
+          ? `${stats.succeeded} ok · ${stats.failed} failed`
+          : lastRun?.text ?? `${stats.succeeded} completed`}
+      </small>
+    </span>
   );
 }
 
-/** `/app/agents` — the tenant's registry (docs/fleet-console.md §4). */
+function lastSeen(agent: Agent): { text: string; title?: string } {
+  const timestamp = agent.lastSeenAt ?? agent.cardFetchedAt;
+  if (!timestamp) return { text: "never" };
+  return {
+    text: `${ago(timestamp)} ago`,
+    title: `${agent.lastSeenAt ? "Last seen" : "Card fetched"} ${new Date(timestamp).toLocaleString()}`,
+  };
+}
+
+/** `/app/agents` — the tenant's A2A registry, as an operational directory. */
 export function Agents() {
   const [agents, setAgents] = useState<Agent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -43,58 +51,95 @@ export function Agents() {
       .catch((err: { message: string }) => setError(err.message));
   }, []);
 
+  const registered = agents ?? [];
+  const healthy = registered.filter((agent) => agent.health === "healthy").length;
+  const capabilities = new Set(registered.flatMap((agent) => agent.skills.map((skill) => skill.id))).size;
+  const inFlight = registered.reduce((total, agent) => total + agent.stats.running, 0);
+
   return (
     <Shell>
       {() => (
-        <>
-          <div className="page-head">
-            <h1>Agents</h1>
-            <p>
-              Any A2A server: it publishes a card, accepts a message, and calls back
-              when the work is done.
-            </p>
+        <div className="registry-page">
+          <div className="page-head control-page-head">
+            <div>
+              <span className="control-kicker">FLEET REGISTRY</span>
+              <h1>Agents</h1>
+              <p>Every A2A endpoint Fleet can dispatch work to, and the capabilities it exposes.</p>
+            </div>
+            <Link className="btn control-action" to="/app/agents/new">
+              <span aria-hidden="true">＋</span> Connect agent
+            </Link>
           </div>
 
           {error ? <div className="error">{error}</div> : null}
-
           {agents === null && !error ? <p className="center-note">Loading…</p> : null}
 
-          {agents && agents.length > 0 ? (
-            <ul className="agent-cards">
-              {agents.map((agent) => (
-                <li key={agent.agentId} className="agent-card">
-                  <div className="row-head">
-                    <Link to={`/app/agents/${encodeURIComponent(agent.agentId)}`}>
-                      <code>{agent.agentId}</code>
-                    </Link>
-                    <HealthPill health={agent.health} />
-                  </div>
-                  <p className="row-sub">{agent.endpointUrl}</p>
-                  <p className="row-sub">
-                    {agent.skills.length > 0
-                      ? agent.skills.map((s) => s.id).join(" · ")
-                      : "no skills on the card"}
-                  </p>
-                  <AgentStats stats={agent.stats} />
-                </li>
-              ))}
-            </ul>
-          ) : null}
-
-          {agents && agents.length === 0 ? (
-            <div className="panel">
-              <div className="empty">
-                <p className="lead">No agents registered.</p>
+          {agents ? (
+            <>
+              <div className="registry-metrics" aria-label="Agent fleet summary">
+                <div><strong>{registered.length}</strong><span>registered</span></div>
+                <div><strong>{healthy}</strong><span>healthy</span></div>
+                <div><strong>{capabilities}</strong><span>capabilities</span></div>
+                <div><strong>{inFlight}</strong><span>in flight</span></div>
               </div>
-            </div>
-          ) : null}
 
-          <p className="actions">
-            <Link className="btn" to="/app/agents/new">
-              Connect an agent
-            </Link>
-          </p>
-        </>
+              {registered.length === 0 ? (
+                <div className="registry-empty">
+                  <span aria-hidden="true">◇</span>
+                  <div>
+                    <strong>No agents connected</strong>
+                    <p>Connect an A2A endpoint and Fleet will discover its skills automatically.</p>
+                  </div>
+                  <Link className="btn ghost small" to="/app/agents/new">Connect the first agent</Link>
+                </div>
+              ) : (
+                <div className="registry-table">
+                  <div className="registry-table-head agent-registry-grid" aria-hidden="true">
+                    <span>AGENT</span>
+                    <span>HEALTH</span>
+                    <span>CAPABILITIES</span>
+                    <span>ACTIVITY</span>
+                    <span>LAST SEEN</span>
+                    <span />
+                  </div>
+                  {registered.map((agent) => {
+                    const seen = lastSeen(agent);
+                    return (
+                      <Link
+                        to={`/app/agents/${encodeURIComponent(agent.agentId)}`}
+                        key={agent.agentId}
+                        className="registry-row agent-registry-grid"
+                      >
+                        <span className="registry-primary agent-identity">
+                          <i className={`registry-dot ${agent.health}`} aria-hidden="true" />
+                          <span>
+                            <strong>{agent.displayName || agent.agentId}</strong>
+                            <code>{agent.agentId}</code>
+                            <small>{agent.endpointUrl}</small>
+                          </span>
+                        </span>
+                        <span className="agent-health"><HealthPill health={agent.health} /></span>
+                        <span className="registry-skills">
+                          {agent.skills.length === 0 ? (
+                            <em>no skills</em>
+                          ) : (
+                            <>
+                              {agent.skills.slice(0, 2).map((skill) => <code key={skill.id}>{skill.id}</code>)}
+                              {agent.skills.length > 2 ? <small>+{agent.skills.length - 2}</small> : null}
+                            </>
+                          )}
+                        </span>
+                        <AgentActivity stats={agent.stats} />
+                        <span className="registry-seen" title={seen.title}>{seen.text}</span>
+                        <span className="registry-arrow" aria-hidden="true">→</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          ) : null}
+        </div>
       )}
     </Shell>
   );

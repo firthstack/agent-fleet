@@ -364,28 +364,6 @@ footer.site {
   overflow-wrap: anywhere;
 }
 
-.agent-cards {
-  list-style: none;
-  margin: 0 0 16px;
-  padding: 0;
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-}
-.agent-card {
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  padding: 14px 16px;
-}
-.agent-stats {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-}
-
 .pill {
   font-family: var(--mono);
   font-size: 11px;
@@ -495,6 +473,50 @@ label.check input {
 .nav a:hover {
   color: var(--ink);
 }
+@media (max-width: 720px) {
+  .topbar {
+    gap: 12px;
+    padding-inline: 16px;
+  }
+  .who {
+    display: none;
+  }
+  .nav {
+    gap: 14px;
+  }
+}
+@media (max-width: 480px) {
+  .topbar {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 8px 14px;
+    padding: 10px 16px 9px;
+  }
+  .topbar > .brand {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .topbar > .spacer {
+    display: none;
+  }
+  .topbar > .btn {
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: end;
+    padding: 5px 10px;
+    font-size: 12px;
+  }
+  .topbar > .nav {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-content: space-between;
+    padding-top: 7px;
+    border-top: 1px solid var(--rule);
+  }
+  .topbar > .nav a {
+    font-size: 12px;
+  }
+}
 .crumb {
   margin: 0 0 8px;
   font-size: 13px;
@@ -508,6 +530,477 @@ label.check input {
 .row-name {
   font-size: 13px;
   color: var(--muted);
+}
+
+/* ---------------------------------------------- agent/workflow registries */
+
+.registry-page {
+  padding-bottom: 64px;
+}
+.control-page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 32px;
+  padding-bottom: 20px;
+}
+.control-page-head > div {
+  min-width: 0;
+}
+.control-kicker {
+  display: block;
+  margin-bottom: 5px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--accent);
+}
+.control-page-head h1 {
+  margin-bottom: 4px;
+}
+.control-page-head p {
+  max-width: 680px;
+}
+.control-action {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* Mirrors the metric strip in Mission Control: just enough context before
+ * the dense directory, without turning every value into a dashboard card. */
+.registry-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0 0 18px;
+  border-block: 1px solid var(--rule);
+}
+.registry-metrics.workflow-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 22px;
+}
+.registry-metrics div {
+  display: grid;
+  gap: 1px;
+  padding: 11px 14px;
+  border-right: 1px solid var(--rule);
+}
+.registry-metrics div:first-child {
+  padding-left: 0;
+}
+.registry-metrics div:last-child {
+  border-right: 0;
+}
+.registry-metrics strong {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.registry-metrics span {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.registry-table {
+  overflow: hidden;
+  border: 1px solid var(--rule-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 22px 60px rgba(5, 10, 16, 0.045);
+}
+.registry-table-head,
+.registry-row {
+  display: grid;
+  align-items: center;
+  gap: 16px;
+}
+.agent-registry-grid {
+  grid-template-columns: minmax(210px, 1.45fr) 92px minmax(150px, 1fr) minmax(132px, 0.9fr) 72px 16px;
+}
+.workflow-registry-grid {
+  grid-template-columns: minmax(210px, 1.4fr) 82px 90px minmax(180px, 1fr) 16px;
+}
+.registry-table-head {
+  min-height: 38px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface-2);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+.registry-row {
+  min-height: 82px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--rule);
+  color: var(--ink);
+  text-decoration: none;
+  transition: background 140ms ease;
+}
+.registry-row:last-child {
+  border-bottom: 0;
+}
+.registry-row:hover {
+  background: var(--surface-2);
+  text-decoration: none;
+}
+.registry-primary {
+  display: grid;
+  grid-template-columns: 9px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  min-width: 0;
+}
+.registry-primary > span {
+  display: grid;
+  min-width: 0;
+}
+.registry-primary strong {
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.registry-primary code,
+.registry-primary small {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.registry-primary code {
+  margin-top: 1px;
+  font-size: 9.5px;
+}
+.registry-primary small {
+  margin-top: 2px;
+  font-family: var(--mono);
+  font-size: 8.5px;
+}
+.registry-dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.registry-dot.healthy {
+  background: var(--ok);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--ok) 42%, transparent);
+}
+.registry-dot.stale {
+  background: var(--warn);
+}
+.registry-dot.unreachable {
+  background: var(--bad);
+}
+.agent-health {
+  justify-self: start;
+}
+.registry-skills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+.registry-skills code {
+  overflow: hidden;
+  max-width: 100%;
+  padding: 2px 6px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 8.5px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.registry-skills small,
+.registry-skills em {
+  align-self: center;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-style: normal;
+  color: var(--muted);
+}
+.registry-activity {
+  display: grid;
+  min-width: 0;
+}
+.registry-activity strong {
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.registry-activity strong.live {
+  color: var(--live);
+}
+.registry-activity strong.warn {
+  color: var(--warn);
+}
+.registry-activity.quiet strong,
+.registry-activity small,
+.registry-seen {
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.registry-seen {
+  text-align: right;
+}
+.registry-arrow {
+  color: var(--muted);
+  transition: color 140ms ease, transform 140ms ease;
+}
+.registry-row:hover .registry-arrow {
+  color: var(--accent);
+  transform: translateX(2px);
+}
+
+.workflow-launcher {
+  display: grid;
+  grid-template-columns: minmax(200px, 0.85fr) minmax(390px, 1.35fr);
+  align-items: center;
+  gap: 28px;
+  padding: 18px 20px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 10px;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--accent-soft) 62%, transparent), transparent 48%),
+    var(--surface);
+}
+.workflow-launcher-copy {
+  display: grid;
+}
+.workflow-launcher-copy .control-kicker {
+  margin-bottom: 3px;
+}
+.workflow-launcher-copy strong {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.workflow-launcher-copy small {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.workflow-launcher-form {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  background: var(--ground);
+}
+.workflow-launcher-form > span {
+  padding-left: 12px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+.workflow-launcher-form input {
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.workflow-launcher-form input:focus {
+  outline: 0;
+}
+.workflow-launcher-form:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.workflow-launcher-form .btn {
+  align-self: stretch;
+  border-radius: 0;
+  white-space: nowrap;
+}
+.workflow-mark {
+  margin-top: 1px;
+  font-family: var(--mono);
+  font-size: 14px;
+  font-style: normal;
+  color: var(--accent);
+}
+.workflow-version {
+  justify-self: start;
+}
+.workflow-history {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+.workflow-history strong {
+  color: var(--ink);
+  font-weight: 500;
+}
+.workflow-ref {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.registry-empty {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 24px;
+  border: 1px dashed var(--rule-strong);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.registry-empty > span {
+  font-family: var(--mono);
+  font-size: 18px;
+  color: var(--accent);
+}
+.registry-empty strong {
+  font-size: 13px;
+}
+.registry-empty p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+@media (max-width: 900px) {
+  .agent-registry-grid {
+    grid-template-columns: minmax(200px, 1.4fr) 90px minmax(140px, 1fr) minmax(125px, 0.9fr) 16px;
+  }
+  .agent-registry-grid > :nth-child(5) {
+    display: none;
+  }
+  .workflow-launcher {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+  .workflow-registry-grid {
+    grid-template-columns: minmax(200px, 1.4fr) 80px 90px 16px;
+  }
+  .workflow-registry-grid > :nth-child(4) {
+    display: none;
+  }
+}
+
+@media (max-width: 680px) {
+  .control-page-head {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .control-action {
+    align-self: flex-start;
+  }
+  .registry-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .registry-metrics div:nth-child(2) {
+    border-right: 0;
+  }
+  .registry-metrics div:nth-child(n + 3) {
+    border-top: 1px solid var(--rule);
+  }
+  .registry-metrics.workflow-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .registry-metrics.workflow-metrics div:nth-child(2) {
+    border-right: 1px solid var(--rule);
+  }
+  .registry-metrics.workflow-metrics div:nth-child(n + 3) {
+    border-top: 0;
+  }
+  .registry-table-head {
+    display: none;
+  }
+  .registry-row {
+    min-height: 0;
+    gap: 10px 16px;
+    padding-block: 15px;
+  }
+  .agent-registry-grid {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .agent-identity {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .agent-health {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: start;
+  }
+  .registry-skills {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    padding-left: 19px;
+  }
+  .registry-activity {
+    grid-column: 1;
+    grid-row: 3;
+    padding-left: 19px;
+  }
+  .agent-registry-grid .registry-arrow {
+    grid-column: 2;
+    grid-row: 3;
+    align-self: center;
+  }
+  .workflow-registry-grid {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .workflow-identity {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .workflow-version {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: start;
+  }
+  .workflow-history {
+    grid-column: 1;
+    grid-row: 2;
+    padding-left: 19px;
+  }
+  .workflow-registry-grid .registry-arrow {
+    grid-column: 2;
+    grid-row: 2;
+  }
+}
+
+@media (max-width: 520px) {
+  .workflow-launcher-form {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .workflow-launcher-form .btn {
+    grid-column: 1 / -1;
+    justify-content: center;
+    min-height: 42px;
+    border-top: 1px solid var(--rule-strong);
+  }
+  .registry-empty {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .registry-empty .btn {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
 }
 
 select,
