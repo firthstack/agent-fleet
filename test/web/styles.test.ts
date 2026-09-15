@@ -19,6 +19,14 @@ describe("header nav spacing", () => {
     expect(gap, ".nav should declare a gap").toBeDefined();
     expect(Number(gap)).toBeGreaterThan(0);
   });
+
+  it("moves the nav onto its own row on a phone-sized dashboard", () => {
+    const compact = css.slice(css.indexOf("@media (max-width: 720px)"));
+    const mobile = css.slice(css.indexOf("@media (max-width: 480px)"));
+    expect(mobile).toContain(".topbar > .nav");
+    expect(mobile).toMatch(/\.topbar > \.nav\s*\{[^}]*grid-column:\s*1 \/ -1/);
+    expect(compact).toMatch(/\.who\s*\{[^}]*display:\s*none/);
+  });
 });
 
 // The definition editor and the state diagram both scroll their own
