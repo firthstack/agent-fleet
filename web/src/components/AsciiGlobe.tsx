@@ -1,4 +1,4 @@
-import { useEffect, useRef, type CSSProperties } from "react";
+import { useEffect, useRef } from "react";
 import { GRID, placeOnGlobe, renderGlobe } from "../globe.ts";
 
 /**
@@ -14,6 +14,9 @@ import { GRID, placeOnGlobe, renderGlobe } from "../globe.ts";
 const { cols: COLS, rows: ROWS } = GRID;
 /** Degrees per second. Slow enough to read as a planet, not a carousel. */
 const SPIN_RATE = 5;
+/** The globe turns slowly, so 24 visual updates per second are indistinguishable
+ * from 60 while cutting its text and path mutations by more than half. */
+const FRAME_MS = 1000 / 24;
 
 /**
  * Where the fleet is. Real cities, because "an agent in São Paulo and one in
@@ -40,7 +43,8 @@ export const FLEET = [
 /** One second per hop, so the relay's period is the length of the chain. */
 const HOP_SECONDS = 1;
 
-export function AsciiGlobe({ style, stage }: { style: CSSProperties; stage: number }) {
+export function AsciiGlobe() {
+  const root = useRef<HTMLDivElement>(null);
   const land = useRef<HTMLPreElement>(null);
   const sea = useRef<HTMLPreElement>(null);
   const dots = useRef<Array<HTMLSpanElement | null>>([]);
@@ -51,6 +55,7 @@ export function AsciiGlobe({ style, stage }: { style: CSSProperties; stage: numb
     const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     let spin = 20;
     let last = performance.now();
+    let lastPaint = 0;
 
     const paint = () => {
       const { land: l, sea: s } = renderGlobe(COLS, ROWS, spin);
@@ -95,8 +100,23 @@ export function AsciiGlobe({ style, stage }: { style: CSSProperties; stage: numb
     if (still) return;
 
     const tick = (now: number) => {
+      if (document.hidden) {
+        last = now;
+        frame.current = window.requestAnimationFrame(tick);
+        return;
+      }
+      if (root.current?.closest<HTMLElement>(".site")?.dataset.stage === "0") {
+        last = now;
+        frame.current = window.requestAnimationFrame(tick);
+        return;
+      }
+      if (now - lastPaint < FRAME_MS) {
+        frame.current = window.requestAnimationFrame(tick);
+        return;
+      }
       spin = (spin + ((now - last) / 1000) * SPIN_RATE) % 360;
       last = now;
+      lastPaint = now;
       paint();
       frame.current = window.requestAnimationFrame(tick);
     };
@@ -112,12 +132,12 @@ export function AsciiGlobe({ style, stage }: { style: CSSProperties; stage: numb
    * a standing ellipse.
    */
   const cell = {
-    fontSize: `calc(${style.height ?? "0px"} / ${ROWS})`,
+    fontSize: `calc(100vh / ${ROWS})`,
     lineHeight: 1,
   } as const;
 
   return (
-    <div className="globe" style={style} aria-hidden="true">
+    <div ref={root} className="globe" aria-hidden="true">
       <pre ref={sea} className="globe-layer sea" style={cell} />
       <pre ref={land} className="globe-layer land" style={cell} />
 
@@ -144,15 +164,12 @@ export function AsciiGlobe({ style, stage }: { style: CSSProperties; stage: numb
             ref={(el) => {
               dots.current[i] = el;
             }}
-            className={`agent ${stage === 2 ? "chase" : "flicker"}`}
-            style={
-              stage === 2
-                ? {
-                    animationDuration: `${FLEET.length * HOP_SECONDS}s`,
-                    animationDelay: `${i * HOP_SECONDS}s`,
-                  }
-                : { animationDelay: `${i * 0.7}s` }
-            }
+            className="agent"
+            style={{
+              ["--flicker-delay" as string]: `${i * 0.7}s`,
+              ["--chase-delay" as string]: `${i * HOP_SECONDS}s`,
+              ["--chase-duration" as string]: `${FLEET.length * HOP_SECONDS}s`,
+            }}
           />
         ))}
       </div>

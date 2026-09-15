@@ -1,9 +1,7 @@
 /**
  * What the product is called, in one place.
  *
- * It was in three, and they had already drifted: the landing page said Fleet
- * while the app shell and the login card still said `agent·fleet` — the
- * repository's name, which was never the product's. Anyone signing up met two
- * different products either side of the button.
+ * Shared by the public page, auth screen, console shell, document title and
+ * auth provider so the user sees one product name across the whole journey.
  */
 export const PRODUCT_NAME = "Fleet";

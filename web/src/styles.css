@@ -602,26 +602,6 @@ textarea:focus {
   margin: 0 0 16px;
 }
 
-/* Elapsed time reads as a value, not prose. */
-.age {
-  font-family: var(--mono);
-  font-size: 11.5px;
-  color: var(--muted);
-}
-
-/* The gap between two steps. A slow one is called out because the whole
- * reason to render a timeline is to show where the hours went. */
-.gap {
-  font-family: var(--mono);
-  font-size: 11.5px;
-  color: var(--muted);
-  margin-right: 10px;
-}
-.gap.slow {
-  color: var(--warn);
-  font-weight: 600;
-}
-
 /* Code left, graph right — and stacked on a narrow screen, where a
  * side-by-side editor is worse than either half on its own. */
 .editor {
@@ -911,157 +891,492 @@ textarea.code::-webkit-scrollbar-thumb:hover,
   }
 }
 
-/* ------------------------------------------------------- a run, as a rail */
+/* ---------------------------------------------------- run mission control */
 
-/*
- * Newest at the top, where the run began at the bottom — the order you read
- * a log in, and the order the question "what just happened" is asked in.
- *
- * This replaces a list of rows that carried the raw payload under each one.
- * Two generations of `.chain` rules had stacked up in this file and the
- * older one's `grid-template-columns: 22px …` was still winning, which is
- * how every state name came to be clipped to five letters.
- */
-.rail {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.run-mission-page {
+  padding: 28px 0 64px;
 }
-.rail-step {
-  position: relative;
-  display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) auto;
-  gap: 0 12px;
-  padding: 0 0 20px;
-  align-items: start;
-}
-.rail-step:last-child {
-  padding-bottom: 0;
-}
-/* The segment of rail below this node, down to the next one. The run's
- * beginning is the last row, and has nothing below it to join. */
-.rail-step::before {
-  content: "";
-  position: absolute;
-  left: 9px;
-  top: 20px;
-  bottom: 0;
-  width: 1px;
-  background: var(--rule);
-}
-.rail-step:last-child::before {
-  display: none;
-}
-.rail-node {
-  font-family: var(--mono);
-  font-size: 13px;
-  line-height: 20px;
-  text-align: center;
-  color: var(--muted);
-  /* Sits on top of the rail rather than being crossed by it. */
-  position: relative;
-  z-index: 1;
+.mission-control {
+  overflow: hidden;
+  border: 1px solid var(--rule-strong);
+  border-radius: 12px;
   background: var(--surface);
+  box-shadow: 0 28px 80px rgba(5, 10, 16, 0.08);
 }
-.rail-step.bad .rail-node {
-  color: var(--bad);
+.mission-bar {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 54px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: 11px;
 }
-.rail-step.ok .rail-node {
-  color: var(--ok);
-}
-.rail-step.warn .rail-node {
-  color: var(--warn);
-}
-.rail-step.start .rail-node,
-.rail-step.step .rail-node {
-  color: var(--accent);
-}
-.rail-body {
-  min-width: 0;
-}
-.rail-head {
-  display: flex;
+.mission-brand,
+.mission-run-state {
+  display: inline-flex;
   align-items: center;
   gap: 8px;
-  line-height: 20px;
 }
-.rail-head .spacer {
-  flex: 1;
-}
-.rail-state {
-  font-family: var(--mono);
-  font-size: 13px;
+.mission-brand {
   color: var(--ink);
-  /* The name is the row's subject: it wraps rather than being cut off. */
-  overflow-wrap: anywhere;
-}
-.rail-step.bad .rail-state {
-  color: var(--bad);
   font-weight: 600;
 }
-.rail-note {
-  margin: 3px 0 0;
-  font-size: 13px;
+.mission-brand i,
+.mission-run-state i,
+.mission-agents > div > i {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+}
+.mission-brand i {
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.mission-crumbs {
+  overflow: hidden;
   color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mission-crumbs a,
+.mission-crumbs b {
+  margin-right: 10px;
+  color: var(--muted);
+  font-weight: 400;
+}
+.mission-crumbs a:hover {
+  color: var(--accent);
+}
+.mission-run-state {
+  justify-self: end;
+  color: var(--muted);
+}
+.mission-run-state.live {
+  color: var(--live);
+}
+.mission-run-state.ok {
+  color: var(--ok);
+}
+.mission-run-state.warn {
+  color: var(--warn);
+}
+.mission-run-state.bad {
+  color: var(--bad);
+}
+.mission-run-state i {
+  background: currentColor;
+  box-shadow: 0 0 9px color-mix(in srgb, currentColor 48%, transparent);
+}
+.mission-run-state.live i {
+  animation: mission-pulse 2.6s ease-in-out infinite;
+}
+@keyframes mission-pulse {
+  50% { opacity: 0.4; }
+}
+
+.mission-body {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  min-height: 620px;
+}
+.mission-summary {
+  padding: 28px 24px;
+  border-right: 1px solid var(--rule);
+  background: var(--surface-2);
+}
+.mission-label {
+  display: block;
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+.mission-summary h2 {
+  margin: 8px 0 3px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
   overflow-wrap: anywhere;
 }
-.rail-step.bad .rail-note {
+.mission-id {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.mission-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 24px 0 32px;
+  border-block: 1px solid var(--rule);
+}
+.mission-metrics div {
+  display: grid;
+  gap: 2px;
+  padding: 14px 0;
+}
+.mission-metrics strong {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 500;
   color: var(--ink);
 }
-.rail-more {
-  margin-top: 6px;
+.mission-metrics span {
+  font-size: 10px;
+  color: var(--muted);
 }
-.rail-more summary {
+.mission-agents {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+}
+.mission-agents > p {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.mission-agents > div {
+  display: grid;
+  grid-template-columns: 7px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.mission-agents > div > i {
+  background: var(--muted);
+}
+.mission-agents > div > i.live {
+  background: var(--live);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--live) 45%, transparent);
+}
+.mission-agents > div > i.ok {
+  background: var(--ok);
+}
+.mission-agents > div > i.warn {
+  background: var(--warn);
+}
+.mission-agents > div > i.bad {
+  background: var(--bad);
+}
+.mission-agents span {
+  display: grid;
+  min-width: 0;
+}
+.mission-agents strong,
+.mission-agents small,
+.mission-agents em {
+  overflow: hidden;
   font-family: var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mission-agents strong {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.mission-agents small,
+.mission-agents em {
+  font-size: 9px;
+  color: var(--muted);
+}
+.mission-agents em {
+  max-width: 72px;
+  font-style: normal;
+}
+.mission-source {
+  display: grid;
+  gap: 4px;
+  margin-top: 32px;
+  padding-top: 18px;
+  border-top: 1px solid var(--rule);
+}
+.mission-source code {
+  margin-top: 5px;
+  color: var(--ink);
+}
+.mission-source span {
+  overflow-wrap: anywhere;
   font-size: 11.5px;
+  color: var(--muted);
+}
+.mission-vars {
+  margin-top: 22px;
+}
+.mission-vars summary,
+.mission-payload summary {
+  font-family: var(--mono);
+  font-size: 10.5px;
   color: var(--muted);
   cursor: pointer;
 }
-.rail-more summary:hover {
+.mission-vars summary:hover,
+.mission-payload summary:hover {
   color: var(--accent);
 }
-/* Aligned to the foot of the row, beside the segment it measures. */
-.rail-gap {
-  align-self: end;
-  font-family: var(--mono);
-  font-size: 11.5px;
-  color: var(--muted);
-  white-space: nowrap;
-}
-.rail-gap.slow {
-  color: var(--warn);
-}
 
-/* The verdict: one line, above everything, saying how it went. */
-.verdict {
+.mission-canvas {
+  padding: 26px 30px 44px;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--rule) 32%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--rule) 32%, transparent) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+.mission-canvas-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--rule);
+}
+.mission-canvas-head > div {
+  display: grid;
+  gap: 5px;
+}
+.mission-canvas-head strong,
+.mission-clock {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.mission-clock {
+  color: var(--accent);
+}
+.mission-verdict {
+  display: flex;
+  align-items: center;
   gap: 8px;
-  margin: 10px 0 0;
-  font-size: 14px;
+  width: min(100%, 620px);
+  margin: 22px auto 0;
+  padding: 9px 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  font-size: 12px;
+  color: var(--muted);
+}
+.mission-verdict span {
+  font-family: var(--mono);
+}
+.mission-verdict.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 30%, var(--rule)); }
+.mission-verdict.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, var(--rule)); }
+.mission-verdict.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 35%, var(--rule)); }
+
+.mission-path {
+  width: min(100%, 620px);
+  margin: 18px auto 0;
+  padding: 0;
+  list-style: none;
+}
+.mission-step {
+  position: relative;
+  padding-bottom: 26px;
+}
+.mission-step:last-child {
+  padding-bottom: 0;
+}
+.mission-step::after {
+  content: "";
+  position: absolute;
+  left: 33px;
+  top: 68px;
+  bottom: 0;
+  width: 1px;
+  background: var(--rule-strong);
+}
+.mission-step:last-child::after {
+  display: none;
+}
+.mission-node {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 68px;
+  padding: 11px 16px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.mission-number,
+.mission-node-state,
+.mission-node-copy small {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--muted);
+}
+.mission-number {
+  color: var(--accent);
+}
+.mission-node-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.mission-node-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mission-node-title code {
+  overflow-wrap: anywhere;
+  font-size: 12.5px;
   color: var(--ink);
 }
-.verdict span {
-  font-family: var(--mono);
+.mission-node-copy p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }
-.verdict.bad {
-  color: var(--bad);
+.mission-node-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
-.verdict.ok {
+.mission-node-state i {
+  font-style: normal;
+}
+.mission-step.ok .mission-node {
+  border-color: color-mix(in srgb, var(--ok) 32%, var(--rule));
+}
+.mission-step.ok .mission-number,
+.mission-step.ok .mission-node-state {
   color: var(--ok);
 }
-.verdict.warn {
+.mission-step.bad .mission-node {
+  border-color: color-mix(in srgb, var(--bad) 45%, var(--rule));
+}
+.mission-step.bad .mission-number,
+.mission-step.bad .mission-node-state {
+  color: var(--bad);
+}
+.mission-step.warn .mission-node,
+.mission-step.blocked .mission-node {
+  border-color: color-mix(in srgb, var(--warn) 48%, var(--rule));
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--warn) 6%, transparent);
+}
+.mission-step.warn .mission-number,
+.mission-step.warn .mission-node-state,
+.mission-step.blocked .mission-number,
+.mission-step.blocked .mission-node-state {
   color: var(--warn);
 }
-.verdict.live,
-.verdict.step,
-.verdict.start,
-.verdict.wait {
+.mission-step.current .mission-node {
+  background: color-mix(in srgb, var(--warn-soft) 52%, var(--surface));
+}
+.mission-blocker {
+  position: relative;
+  z-index: 1;
+  margin: 9px 0 9px 48px;
+  padding: 11px 13px;
+  border-left: 2px solid var(--warn);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--warn-soft);
+}
+.mission-blocker > span {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--warn);
+}
+.mission-blocker p {
+  margin: 4px 0 1px;
+  font-size: 12px;
+  color: var(--ink);
+}
+.mission-blocker small {
+  font-family: var(--mono);
+  font-size: 9.5px;
   color: var(--muted);
 }
+.mission-payload {
+  position: relative;
+  z-index: 1;
+  margin: 8px 0 0 48px;
+}
+.mission-payload .schema {
+  margin-bottom: 0;
+}
+.mission-gap {
+  position: absolute;
+  left: 44px;
+  bottom: 7px;
+  z-index: 2;
+  padding: 0 5px;
+  background: var(--surface);
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--muted);
+}
+.mission-gap.slow {
+  color: var(--warn);
+}
 
-/* Stacked full-width panels, where these two used to share a row and spend
- * their width on scrollbars. */
-.panel.stack {
-  margin-top: 16px;
+@media (max-width: 780px) {
+  .run-mission-page {
+    padding-top: 18px;
+  }
+  .mission-bar {
+    grid-template-columns: 1fr auto;
+  }
+  .mission-crumbs {
+    display: none;
+  }
+  .mission-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mission-summary {
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .mission-agents {
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .run-mission-page {
+    margin-inline: -10px;
+  }
+  .mission-control {
+    border-radius: 9px;
+  }
+  .mission-summary,
+  .mission-canvas {
+    padding: 20px 14px 28px;
+  }
+  .mission-node {
+    grid-template-columns: 24px minmax(0, 1fr);
+    gap: 9px;
+    padding: 10px 11px;
+  }
+  .mission-node-state {
+    grid-column: 2;
+  }
+  .mission-step::after {
+    left: 23px;
+    top: 78px;
+  }
+  .mission-blocker,
+  .mission-payload {
+    margin-left: 32px;
+  }
+  .mission-gap {
+    left: 34px;
+  }
+  .mission-clock {
+    display: none;
+  }
 }

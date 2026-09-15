@@ -6,11 +6,9 @@
  * light variant of it would be a different page, not a lighter one. So the
  * colours here are literal, scoped under `.site`, and never read a token.
  *
- * The camera is computed in `landingCamera.ts` and arrives as inline
- * left/top/width/height on the globe — the path crosses the frame and doubles
- * back, which interpolated custom properties could not express readably.
- * `--p` is left for the one thing that is a straight ramp (the far starfield),
- * and `data-stage` picks which overlay is lit.
+ * The camera is computed in `landingCamera.ts`, then written straight to CSS
+ * custom properties. React stays out of the scroll loop and the browser can
+ * move the scene entirely on the compositor.
  *
  * A rAF-throttled scroll listener rather than a scroll-linked CSS timeline:
  * support is still uneven enough that the page would simply not move for a
@@ -18,16 +16,36 @@
  */
 
 .site {
-  --ink: #e3e8ee;
-  --muted: #94a0ae;
-  --dim: #5f6b78;
-  --accent: #6fb3e0;
-  --ground: #07090c;
-  --panel: rgba(11, 16, 22, 0.82);
-  --hair: rgba(111, 179, 224, 0.18);
+  --ink: #f1f5f8;
+  --muted: #a5b0bc;
+  --dim: #6d7a88;
+  --accent: #7cc8f2;
+  --accent-bright: #a8ddfb;
+  --fleet-ok: #69d3a4;
+  --fleet-warn: #e5b866;
+  --fleet-bad: #e88178;
+  --ground: #06080b;
+  --panel: rgba(11, 17, 23, 0.9);
+  --hair: rgba(124, 200, 242, 0.17);
+  --camera-x: 50vw;
+  --camera-y: 78vh;
+  --camera-scale: 2.1;
+  --globe-reveal: 0;
+  --horizon-reveal: 1;
+  --space-x: 0vw;
+  --space-y: 0vh;
+  --grid-y: 0vh;
+  --deep-y: 0vh;
+  --deep-opacity: 0.25;
+  --grid-opacity: 0.04;
+  --p: 0;
 
   position: relative;
-  background: var(--ground);
+  min-height: 100%;
+  overflow: clip;
+  background:
+    radial-gradient(circle at 50% 12%, rgba(34, 74, 104, 0.13), transparent 36rem),
+    var(--ground);
   color: var(--ink);
   font-family: var(--sans);
   /* The console's tokens set `color-scheme` per theme; this page paints its
@@ -76,6 +94,35 @@
   overflow: hidden;
   z-index: 0;
   pointer-events: none;
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 72% 42%, rgba(35, 87, 122, 0.08), transparent 28%),
+    linear-gradient(180deg, rgba(7, 9, 12, 0) 70%, rgba(2, 4, 7, 0.62));
+}
+
+.space-haze {
+  position: absolute;
+  inset: -30%;
+  background:
+    radial-gradient(ellipse at 67% 38%, rgba(63, 123, 158, 0.12), transparent 26%),
+    radial-gradient(ellipse at 28% 72%, rgba(40, 78, 112, 0.08), transparent 22%);
+  transform: translate3d(var(--space-x), var(--space-y), 0);
+  will-change: transform;
+}
+
+.space-grid {
+  position: absolute;
+  inset: auto -20% -40% -20%;
+  height: 70%;
+  opacity: var(--grid-opacity);
+  background-image:
+    linear-gradient(rgba(111, 179, 224, 0.15) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(111, 179, 224, 0.12) 1px, transparent 1px);
+  background-size: 72px 72px;
+  transform: perspective(500px) rotateX(68deg) translate3d(0, var(--grid-y), 0);
+  transform-origin: 50% 100%;
+  mask-image: linear-gradient(to bottom, transparent, #000 62%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 62%);
 }
 
 /* Characters, not dots: the planet is drawn from an alphabet, and a sky of
@@ -86,7 +133,11 @@
   line-height: 1;
   color: #cbd6e2;
   user-select: none;
-  animation: twinkle 5s ease-in-out infinite;
+  opacity: var(--o, 0.3);
+}
+.starfield span:nth-child(7n),
+.starfield span:nth-child(11n) {
+  animation: twinkle 6s ease-in-out infinite;
 }
 /* Each star keeps its own brightness through the cycle. The first version
  * set opacity inline and let the keyframes overwrite it, so every star
@@ -103,17 +154,26 @@
 
 /* The far field fades up as the camera pulls back — more sky, less ground. */
 .starfield.deep {
-  opacity: calc(0.25 + var(--p, 0) * 0.75);
+  opacity: var(--deep-opacity);
+  transform: translate3d(0, var(--deep-y), 0);
+  will-change: transform, opacity;
 }
 
-/* The box comes from `cameraAt()` as inline left/top/width/height; CSS only
- * paints it. `left`/`top` address the globe's centre-x and top edge, so the
- * horizon sits exactly where the path says — under the headline in the hero. */
+/* The box stays at a stable 100vh raster size. The camera only changes its
+ * compositor transform, avoiding layout on every scroll frame. */
 .globe,
 .horizon {
   position: absolute;
-  transform: translateX(-50%);
-  will-change: left, top, width, height;
+  left: 0;
+  top: 0;
+  width: 100vh;
+  height: 100vh;
+  transform: translate3d(calc(var(--camera-x) - 50vh), var(--camera-y), 0)
+    scale(var(--camera-scale));
+  transform-origin: 50% 0;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+  contain: layout paint;
 }
 
 /*
@@ -128,17 +188,10 @@
   box-shadow:
     0 -1px 0 0 rgba(111, 179, 224, 0.5),
     0 -30px 80px -26px rgba(111, 179, 224, 0.2);
-  transition: opacity 0.5s ease;
+  opacity: var(--horizon-reveal);
 }
 .globe {
-  opacity: 0;
-  transition: opacity 0.5s ease;
-}
-.site:not([data-stage="0"]) .globe {
-  opacity: 1;
-}
-.site:not([data-stage="0"]) .horizon {
-  opacity: 0;
+  opacity: var(--globe-reveal);
 }
 
 /*
@@ -206,7 +259,9 @@
   position: absolute;
   inset: 0;
   opacity: 0;
-  transition: opacity 0.55s ease;
+  transform: translate3d(0, 12px, 0);
+  transition: opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* The copy owns the left half on every stop, so anything the scene draws for
@@ -237,6 +292,7 @@
 .site[data-stage="3"] .s-trace,
 .site[data-stage="4"] .s-fleet {
   opacity: 1;
+  transform: translate3d(0, 0, 0);
 }
 
 .agent {
@@ -251,8 +307,9 @@
     0 0 14px 2px rgba(111, 179, 224, 0.75);
 }
 /* Connect: each on its own rhythm — agents that know nothing of each other. */
-.agent.flicker {
-  animation: flicker 2.6s ease-in-out infinite;
+.site[data-stage="1"] .agent,
+.site[data-stage="3"] .agent {
+  animation: flicker 2.6s ease-in-out var(--flicker-delay) infinite;
 }
 @keyframes flicker {
   0%,
@@ -267,8 +324,8 @@
 /* The relay. Its period is set on the element to the number of hops, so the
  * last agent never fires in step with the first — which is exactly what a
  * fixed 4s cycle did to a five-agent chain, collapsing the order. */
-.agent.chase {
-  animation: chase linear infinite;
+.site[data-stage="2"] .agent {
+  animation: chase var(--chase-duration) linear var(--chase-delay) infinite;
 }
 @keyframes chase {
   0%,
@@ -319,50 +376,104 @@
   }
 }
 
-/*
- * Drawn, like the planet, from characters. Stroked rectangles were the one
- * thing left in the scene speaking a different language, and at the end of a
- * page made of type they read as a diagram dropped into a photograph.
- */
-.formation {
-  position: relative;
-  height: 40vh;
-  min-height: 260px;
-}
-.craft-glyph {
-  position: absolute;
+/* The final scene is a topology, not a fleet of pictograms: the labels make
+ * the participants legible and the central hub makes orchestration explicit. */
+.fleet-topology {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
   font-family: var(--mono);
-  font-size: clamp(15px, 1.9vw, 24px);
-  letter-spacing: 0.06em;
-  color: rgba(163, 205, 232, 0.72);
-  transform: translate(-50%, -50%);
-  user-select: none;
-  animation: bob 6s ease-in-out infinite;
 }
-.craft-glyph.vacant {
-  color: rgba(148, 160, 174, 0.42);
+.topology-route {
+  fill: none;
+  stroke: rgba(111, 179, 224, 0.46);
+  stroke-width: 1.15;
+  stroke-linecap: round;
+  stroke-dasharray: 3 7;
+  vector-effect: non-scaling-stroke;
+  marker-end: url(#fleet-arrow);
+  animation: topology-flow 3.4s linear infinite;
 }
-.formation-label {
-  position: absolute;
-  transform: translate(-50%, -50%);
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--dim);
+#fleet-arrow path {
+  fill: rgba(111, 179, 224, 0.74);
 }
-/*
- * `transform` in a keyframe replaces the property outright, so the centring
- * from `.craft-glyph` has to be repeated in every frame. Left out, each craft
- * hangs half its own size down and to the right of the point it was placed at
- * — which is how the last one came to sit on its own label.
- */
-@keyframes bob {
-  0%,
-  100% {
-    transform: translate(-50%, -50%) translateY(0);
-  }
-  50% {
-    transform: translate(-50%, -50%) translateY(-7px);
-  }
+@keyframes topology-flow {
+  to { stroke-dashoffset: -20; }
+}
+.topology-orbit {
+  fill: none;
+  stroke: rgba(111, 179, 224, 0.11);
+  vector-effect: non-scaling-stroke;
+}
+.topology-orbit.outer {
+  stroke-dasharray: 2 8;
+}
+.topology-orbit.inner {
+  stroke: rgba(111, 179, 224, 0.06);
+}
+.topology-hub rect {
+  fill: rgba(10, 17, 24, 0.92);
+  stroke: rgba(124, 200, 242, 0.72);
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 18px rgba(111, 179, 224, 0.14));
+}
+.topology-live {
+  fill: var(--fleet-ok);
+  filter: drop-shadow(0 0 5px rgba(105, 211, 164, 0.8));
+  animation: topology-pulse 2.4s ease-in-out infinite;
+}
+@keyframes topology-pulse {
+  50% { opacity: 0.35; }
+}
+.topology-hub-name {
+  fill: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+.topology-hub-role {
+  fill: var(--accent-bright);
+  font-size: 8px;
+  letter-spacing: 0.16em;
+}
+.topology-agent rect {
+  fill: rgba(8, 13, 19, 0.82);
+  stroke: rgba(124, 200, 242, 0.24);
+  vector-effect: non-scaling-stroke;
+}
+.topology-agent circle {
+  fill: var(--fleet-ok);
+  filter: drop-shadow(0 0 4px rgba(105, 211, 164, 0.55));
+}
+.topology-agent-id {
+  fill: rgba(227, 232, 238, 0.84);
+  font-size: 10px;
+}
+.topology-agent-skill {
+  fill: var(--dim);
+  font-size: 8px;
+  letter-spacing: 0.11em;
+}
+.topology-agent.open rect {
+  fill: rgba(8, 13, 19, 0.52);
+  stroke: rgba(124, 200, 242, 0.38);
+  stroke-dasharray: 4 4;
+}
+.topology-agent.open circle {
+  fill: var(--accent-bright);
+}
+.topology-agent.open .topology-agent-id {
+  fill: var(--accent-bright);
+}
+.topology-caption {
+  fill: var(--dim);
+  font-size: 9px;
+  letter-spacing: 0.13em;
+}
+.topology-caption tspan:first-child {
+  fill: rgba(163, 205, 232, 0.76);
 }
 
 /* Anyone who has asked for less movement gets the globe, held still. */
@@ -370,7 +481,8 @@
   .site .starfield span,
   .site .agent,
   .site .link,
-  .site .craft-glyph {
+  .site .topology-route,
+  .site .topology-live {
     animation: none;
   }
   /* The globe's own loop checks this too and simply never starts. */
@@ -389,17 +501,36 @@
 }
 
 .site-nav {
+  position: sticky;
+  top: 14px;
+  z-index: 5;
   display: flex;
   align-items: center;
   gap: 28px;
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 22px 40px;
+  max-width: 1160px;
+  margin: 0 auto -68px;
+  padding: 12px 14px 12px 18px;
+  border: 1px solid rgba(111, 179, 224, 0.12);
+  border-radius: 12px;
+  background: rgba(7, 10, 14, 0.72);
+  box-shadow: 0 16px 50px rgba(0, 0, 0, 0.16);
+  backdrop-filter: blur(16px) saturate(125%);
 }
 .site-nav .wordmark {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   font-family: var(--mono);
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.site-nav .wordmark i {
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--accent-bright);
+  border-radius: 50%;
+  box-shadow: 0 0 10px rgba(111, 179, 224, 0.85);
 }
 .site-nav .links {
   display: flex;
@@ -426,16 +557,22 @@
  * is what makes these rules win.
  */
 .site .site-cta {
-  background: var(--accent);
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, #8dccf3, var(--accent));
   color: var(--ground);
   font-weight: 600;
   font-size: 13px;
   padding: 7px 14px;
-  border-radius: 6px;
+  border-radius: 7px;
+  box-shadow: 0 8px 24px rgba(69, 141, 184, 0.16);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
 }
 .site .site-cta:hover {
   color: var(--ground);
   background: #8cc3e8;
+  transform: translateY(-1px);
+  box-shadow: 0 12px 32px rgba(69, 141, 184, 0.26);
 }
 .site .site-cta.big {
   font-size: 15px;
@@ -447,20 +584,25 @@
   font-size: 15px;
   padding: 12px 24px;
   border-radius: 6px;
+  background: rgba(8, 12, 16, 0.34);
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
 }
 .site .site-ghost:hover {
   color: var(--ink);
   border-color: var(--muted);
+  background: rgba(111, 179, 224, 0.06);
+  transform: translateY(-1px);
 }
 
 /* Each stop is a screenful: the scene gets room to change between them. */
 /* 86vh rather than a full screen: the copy still gets a stop of its own, but
  * the camera arrives at the next mark noticeably sooner. */
 .stop {
-  min-height: 86vh;
+  min-height: 78vh;
   display: flex;
   align-items: center;
-  padding: 80px 40px;
+  padding: 76px 40px;
+  scroll-margin-top: 96px;
 }
 .stop > div {
   max-width: 1180px;
@@ -470,6 +612,23 @@
 /* Half the frame, so the scene has the other half to itself. */
 .stop:not(.centred) > div > * {
   max-width: min(48vw, 560px);
+}
+.stop-copy {
+  position: relative;
+}
+.site[data-motion-ready="true"] .stop:not(.hero) .stop-copy {
+  opacity: 0.26;
+  transform: translate3d(0, 28px, 0);
+  filter: blur(2px);
+  transition:
+    opacity 0.72s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.72s cubic-bezier(0.22, 1, 0.36, 1),
+    filter 0.72s ease;
+}
+.site[data-motion-ready="true"] .stop[data-revealed="true"] .stop-copy {
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+  filter: blur(0);
 }
 .stop.centred {
   justify-content: center;
@@ -484,9 +643,9 @@
  * under the fold says it without spending a line of copy on "scroll ↓".
  */
 .stop.hero {
-  min-height: 88vh;
+  min-height: 92vh;
   align-items: flex-start;
-  padding-top: 12vh;
+  padding-top: max(128px, 15vh);
 }
 
 /*
@@ -513,26 +672,62 @@
   margin: 0 0 14px;
 }
 .site .eyebrow.quiet {
-  color: var(--muted);
-  letter-spacing: 0.18em;
-  margin-bottom: 30px;
+  color: var(--dim);
+  letter-spacing: 0.13em;
+  margin-bottom: 26px;
+}
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.brand-lockup strong {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+}
+.brand-lockup strong::after {
+  content: "/";
+  margin-left: 10px;
+  color: rgba(124, 200, 242, 0.32);
+  font-weight: 400;
+}
+.live-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: #6bd6a4;
+  box-shadow: 0 0 0 4px rgba(107, 214, 164, 0.08), 0 0 14px rgba(107, 214, 164, 0.5);
+  animation: status-pulse 2.8s ease-in-out infinite;
+}
+@keyframes status-pulse {
+  50% { opacity: 0.48; }
 }
 
 .wordmark-hero {
-  font-family: var(--mono);
+  margin: 0 auto 26px;
+  font-family: var(--sans);
   font-weight: 600;
-  font-size: clamp(48px, 7.2vw, 100px);
-  line-height: 0.98;
-  letter-spacing: -0.045em;
-  margin: 0 0 28px;
+  font-size: clamp(46px, 5.6vw, 82px);
+  line-height: 1.02;
+  letter-spacing: -0.058em;
+  text-shadow: 0 0 60px rgba(138, 203, 241, 0.08);
+}
+.hero-line {
+  display: block;
+  white-space: nowrap;
 }
 .wordmark-hero .run {
-  color: var(--accent);
+  color: var(--accent-bright);
 }
 
 .site h2 {
-  font-size: clamp(26px, 3.2vw, 36px);
-  letter-spacing: -0.028em;
+  font-size: clamp(28px, 3.4vw, 40px);
+  letter-spacing: -0.038em;
   font-weight: 600;
   margin: 0 0 14px;
   max-width: 18ch;
@@ -541,11 +736,11 @@
   max-width: none;
 }
 .site .blurb {
-  font-size: 16.5px;
-  line-height: 1.6;
+  font-size: 17.5px;
+  line-height: 1.65;
   color: var(--muted);
   margin: 0 0 30px;
-  max-width: 52ch;
+  max-width: 54ch;
 }
 .stop.centred .blurb {
   margin-left: auto;
@@ -555,29 +750,56 @@
 .four-words {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 1px;
-  background: var(--hair);
-  border: 1px solid var(--hair);
-  border-radius: 6px;
-  overflow: hidden;
-  max-width: 680px;
+  max-width: 820px;
   margin: 0 auto 36px;
 }
 /* Beats `.site a` (0,1,1) at (0,2,1), so the words keep their own colour
  * and the whole cell — not just the text — is the target. */
 .site .four-words a {
-  display: block;
-  background: rgba(7, 9, 12, 0.8);
-  padding: 17px 8px;
+  display: grid;
+  gap: 6px;
+  position: relative;
+  padding: 15px 20px;
+  border-block: 1px solid var(--hair);
+  background: rgba(8, 12, 17, 0.58);
   font-family: var(--mono);
-  font-size: 13px;
-  letter-spacing: 0.08em;
+  text-align: left;
+  color: var(--ink);
+  transition: background 0.22s ease, color 0.22s ease;
+}
+.site .four-words a:first-child {
+  border-left: 1px solid var(--hair);
+  border-radius: 9px 0 0 9px;
+}
+.site .four-words a:last-child {
+  border-right: 1px solid var(--hair);
+  border-radius: 0 9px 9px 0;
+}
+.site .four-words a:not(:last-child)::after {
+  content: "→";
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  right: -8px;
+  width: 16px;
+  transform: translateY(-50%);
   color: var(--accent);
-  transition: background 0.18s ease, color 0.18s ease;
+  font-size: 12px;
+  text-align: center;
+}
+.site .four-words small {
+  color: var(--dim);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.site .four-words span {
+  font-size: 13px;
+  letter-spacing: 0.035em;
 }
 .site .four-words a:hover,
 .site .four-words a:focus-visible {
-  background: rgba(111, 179, 224, 0.11);
+  background: rgba(124, 200, 242, 0.1);
   color: #cfe6f6;
 }
 
@@ -597,13 +819,61 @@
   justify-content: center;
 }
 
+.hero-signal {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px 26px;
+  margin-top: 30px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #778695;
+}
+.hero-signal span {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+.hero-signal b {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 400;
+}
+.site .scroll-cue {
+  position: absolute;
+  left: 50%;
+  top: calc(92vh - max(128px, 15vh) - 42px);
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  transform: translateX(-50%);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.scroll-cue i {
+  display: block;
+  width: 1px;
+  height: 22px;
+  background: linear-gradient(var(--accent), transparent);
+  animation: scroll-pulse 2s ease-in-out infinite;
+}
+@keyframes scroll-pulse {
+  50% { transform: translateY(5px); opacity: 0.35; }
+}
+
 /* The concrete thing each stop closes on. Translucent so the scene shows
  * through — the panel is on top of the sky, not cut out of it. */
 .artifact {
   border: 1px solid var(--hair);
-  border-radius: 6px;
+  border-radius: 10px;
   background: var(--panel);
-  backdrop-filter: blur(3px);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2), inset 0 1px rgba(255, 255, 255, 0.018);
+  backdrop-filter: blur(10px) saturate(115%);
   overflow: hidden;
   max-width: 620px;
 }
@@ -611,11 +881,23 @@
   max-width: 760px;
 }
 .artifact-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 10px 14px;
   border-bottom: 1px solid rgba(111, 179, 224, 0.14);
   font-family: var(--mono);
   font-size: 11px;
   color: var(--muted);
+}
+.artifact-head::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 10px 0 rgba(111, 179, 224, 0.34), 20px 0 rgba(111, 179, 224, 0.15);
+  margin-right: 18px;
 }
 .artifact pre {
   margin: 0;
@@ -657,8 +939,37 @@
   grid-template-columns: 28px 1fr minmax(0, 200px);
 }
 .artifact-row .k {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-family: var(--mono);
   font-size: 12.5px;
+}
+.artifact-row .k i {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--dim);
+}
+.artifact-row.done .k i {
+  background: var(--fleet-ok);
+  box-shadow: 0 0 10px rgba(105, 211, 164, 0.4);
+}
+.artifact-row.done .k,
+.artifact-row.done .t {
+  color: var(--fleet-ok);
+}
+.artifact-row.blocked {
+  background: rgba(229, 184, 102, 0.045);
+}
+.artifact-row.blocked .k i {
+  background: var(--fleet-warn);
+  box-shadow: 0 0 10px rgba(229, 184, 102, 0.45);
+}
+.artifact-row.blocked .k,
+.artifact-row.blocked .t {
+  color: var(--fleet-warn);
 }
 .artifact-row .v {
   font-size: 13.5px;
@@ -686,35 +997,361 @@
   color: var(--dim);
 }
 
+/* ------------------------------------------------------- product evidence */
+
+.stop.product-proof {
+  min-height: 108vh;
+  padding-block: 110px;
+}
+.product-proof > .stop-copy {
+  max-width: 1180px;
+}
+.product-proof h2 {
+  max-width: none;
+}
+.fleet-console {
+  overflow: hidden;
+  margin-top: 44px;
+  border: 1px solid rgba(124, 200, 242, 0.18);
+  border-radius: 14px;
+  background: rgba(7, 11, 16, 0.96);
+  box-shadow:
+    0 40px 120px rgba(0, 0, 0, 0.48),
+    0 0 80px rgba(77, 148, 189, 0.045),
+    inset 0 1px rgba(255, 255, 255, 0.025);
+  text-align: left;
+}
+.console-bar {
+  display: grid;
+  grid-template-columns: 220px 1fr auto;
+  align-items: center;
+  min-height: 54px;
+  padding: 0 18px;
+  border-bottom: 1px solid rgba(124, 200, 242, 0.12);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.console-brand,
+.console-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.console-brand {
+  color: var(--ink);
+  font-weight: 600;
+}
+.console-brand i,
+.console-live i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.console-brand i {
+  border: 1px solid var(--accent-bright);
+  box-shadow: 0 0 8px rgba(124, 200, 242, 0.7);
+}
+.console-crumb {
+  color: var(--muted);
+}
+.console-crumb span,
+.console-crumb b {
+  margin-right: 10px;
+  color: var(--dim);
+  font-weight: 400;
+}
+.console-live {
+  color: var(--accent);
+}
+.console-live i {
+  background: var(--accent);
+  box-shadow: 0 0 9px rgba(124, 200, 242, 0.55);
+  animation: status-pulse 2.8s ease-in-out infinite;
+}
+.console-body {
+  display: grid;
+  grid-template-columns: 290px minmax(0, 1fr);
+  min-height: 540px;
+}
+.run-summary {
+  padding: 28px 24px;
+  border-right: 1px solid rgba(124, 200, 242, 0.1);
+  background: rgba(13, 19, 26, 0.68);
+}
+.console-label {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--dim);
+}
+.run-summary h3 {
+  margin: 9px 0 3px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.console-run-id {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--dim);
+}
+.run-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin: 24px 0 34px;
+  border-block: 1px solid rgba(124, 200, 242, 0.1);
+}
+.run-metrics div {
+  display: grid;
+  gap: 2px;
+  padding: 15px 0;
+}
+.run-metrics strong {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.run-metrics span {
+  font-size: 10px;
+  color: var(--dim);
+}
+.agent-label {
+  margin-bottom: 12px;
+}
+.console-agents {
+  display: grid;
+  gap: 5px;
+}
+.console-agents > span {
+  display: grid;
+  grid-template-columns: 7px 1fr auto;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid rgba(124, 200, 242, 0.08);
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.console-agents i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dim);
+}
+.console-agents i.done {
+  background: var(--fleet-ok);
+}
+.console-agents i.blocked {
+  background: var(--fleet-warn);
+  box-shadow: 0 0 8px rgba(229, 184, 102, 0.45);
+}
+.console-agents small {
+  color: var(--dim);
+  font-size: 9px;
+}
+.run-canvas {
+  padding: 26px 30px 40px;
+  background:
+    linear-gradient(rgba(124, 200, 242, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(124, 200, 242, 0.025) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+.canvas-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 22px;
+  border-bottom: 1px solid rgba(124, 200, 242, 0.09);
+}
+.canvas-head > div {
+  display: grid;
+  gap: 5px;
+}
+.canvas-head strong,
+.canvas-clock {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.canvas-clock {
+  color: var(--accent);
+}
+.run-path {
+  width: min(100%, 620px);
+  margin: 30px auto 0;
+}
+.run-node {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 68px;
+  padding: 11px 16px;
+  border: 1px solid rgba(124, 200, 242, 0.13);
+  border-radius: 8px;
+  background: rgba(9, 15, 21, 0.92);
+}
+.run-node > div {
+  display: grid;
+  gap: 3px;
+}
+.run-node strong {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.run-node small,
+.node-state,
+.node-number {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--dim);
+}
+.node-number {
+  color: var(--accent);
+}
+.run-node.done {
+  border-color: rgba(105, 211, 164, 0.2);
+}
+.run-node.done .node-number,
+.run-node.done .node-state {
+  color: var(--fleet-ok);
+}
+.run-node.blocked {
+  border-color: rgba(229, 184, 102, 0.48);
+  box-shadow: 0 0 30px rgba(229, 184, 102, 0.055);
+}
+.run-node.blocked .node-number,
+.run-node.blocked .node-state {
+  color: var(--fleet-warn);
+}
+.path-line {
+  display: block;
+  width: 1px;
+  height: 22px;
+  margin-left: 33px;
+  background: rgba(124, 200, 242, 0.18);
+}
+.path-line.done {
+  background: linear-gradient(var(--fleet-ok), rgba(105, 211, 164, 0.18));
+}
+.blocker-note {
+  margin: 9px 0 9px 48px;
+  padding: 11px 13px;
+  border-left: 2px solid var(--fleet-warn);
+  border-radius: 0 6px 6px 0;
+  background: rgba(229, 184, 102, 0.06);
+}
+.blocker-note span {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: var(--fleet-warn);
+}
+.blocker-note p {
+  margin: 4px 0 1px;
+  font-size: 11.5px;
+  color: var(--ink);
+}
+.blocker-note small {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--dim);
+}
+
+.final-callout {
+  padding: 72px 36px;
+  border: 1px solid rgba(111, 179, 224, 0.14);
+  border-radius: 16px;
+  background: radial-gradient(circle at 50% 0, rgba(111, 179, 224, 0.1), transparent 54%), rgba(7, 10, 14, 0.46);
+  box-shadow: 0 30px 100px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(10px);
+}
+
 /* Below this the frame is too narrow to hold copy beside the scene, so the
  * copy takes the full width and the scene drops back to a texture behind it
  * — readable beats atmospheric. */
 @media (max-width: 1000px) {
   .stop:not(.centred) > div > * {
-    max-width: none;
+    max-width: min(78vw, 620px);
   }
   .scene {
-    opacity: 0.4;
+    opacity: 0.62;
   }
   .panel-right {
     display: none;
+  }
+  .console-body {
+    grid-template-columns: 240px minmax(0, 1fr);
   }
 }
 
 @media (max-width: 780px) {
   .four-words {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .site .four-words a,
+  .site .four-words a:first-child,
+  .site .four-words a:last-child {
+    border: 1px solid var(--hair);
+    border-radius: 8px;
+  }
+  .site .four-words a:not(:last-child)::after {
+    display: none;
   }
   .stop {
     padding: 64px 20px;
   }
   .site-nav {
-    padding: 18px 20px;
+    top: 10px;
+    margin-inline: 12px;
+    margin-bottom: -62px;
+    padding: 10px 10px 10px 14px;
     gap: 16px;
   }
   .site-nav .links {
-    gap: 16px;
+    gap: 12px;
     font-size: 13px;
+  }
+  .site-nav .links > :first-child,
+  .site-nav .links > :nth-child(2) {
+    display: none;
+  }
+  .stop.hero {
+    padding-top: max(116px, 14vh);
+  }
+  .stop:not(.centred) > div > * {
+    max-width: none;
+  }
+  .scene {
+    opacity: 0.48;
+  }
+  .wordmark-hero {
+    font-size: clamp(38px, 11.2vw, 60px);
+    line-height: 1.05;
+  }
+  .hero-line {
+    white-space: normal;
+  }
+  .site .blurb {
+    font-size: 16px;
+  }
+  .site .scroll-cue {
+    display: none;
+  }
+  .hero-signal {
+    gap: 8px 16px;
+  }
+  .final-callout {
+    padding: 52px 22px;
   }
   .artifact-row.trace {
     grid-template-columns: 130px 1fr 64px;
@@ -724,5 +1361,107 @@
   }
   .artifact-row.hop .t {
     display: none;
+  }
+  .stop.product-proof {
+    min-height: auto;
+    padding-block: 92px;
+  }
+  .console-bar {
+    grid-template-columns: 1fr auto;
+  }
+  .console-crumb {
+    display: none;
+  }
+  .console-body {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
+  }
+  .run-summary {
+    border-right: 0;
+    border-bottom: 1px solid rgba(124, 200, 242, 0.1);
+  }
+  .console-agents {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .console-agents > span {
+    grid-template-columns: 7px 1fr;
+  }
+  .console-agents small {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .site-nav .links > :nth-child(3) {
+    display: none;
+  }
+  .site-nav .wordmark {
+    font-size: 12.5px;
+  }
+  .stop {
+    min-height: 88vh;
+    padding-inline: 18px;
+  }
+  .four-words {
+    margin-bottom: 28px;
+  }
+  .site .four-words a {
+    padding: 12px 13px;
+  }
+  .site-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .site .site-cta.big,
+  .site .site-ghost {
+    text-align: center;
+  }
+  .artifact-row.trace {
+    grid-template-columns: 1fr auto;
+    gap: 4px 12px;
+  }
+  .artifact-row.trace .v {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .site-foot > div {
+    padding-inline: 20px;
+  }
+  .fleet-console {
+    margin-top: 34px;
+    border-radius: 10px;
+  }
+  .run-summary,
+  .run-canvas {
+    padding: 20px 14px;
+  }
+  .console-agents {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .console-agents > span {
+    grid-template-columns: 7px 1fr auto;
+  }
+  .console-agents small {
+    display: inline;
+  }
+  .canvas-head {
+    align-items: flex-start;
+  }
+  .canvas-clock {
+    display: none;
+  }
+  .run-node {
+    grid-template-columns: 24px minmax(0, 1fr);
+    gap: 9px;
+    padding: 10px 11px;
+  }
+  .run-node .node-state {
+    grid-column: 2;
+  }
+  .path-line {
+    margin-left: 23px;
+  }
+  .blocker-note {
+    margin-left: 32px;
   }
 }

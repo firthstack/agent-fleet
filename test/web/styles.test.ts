@@ -277,48 +277,22 @@ describe("the fold shows there is more", () => {
   });
 });
 
-/**
- * A keyframe `transform` does not add to the element's transform, it replaces
- * it. Anything centred with `translate(-50%, -50%)` and then animated has to
- * repeat that centring in every frame, or it silently hangs half its own size
- * down and to the right of where it was placed. That is what put the last
- * craft in the formation on top of its own label — a collision no coordinate
- * in the markup accounts for.
- */
-describe("landing animations that move a centred element", () => {
+describe("the landing fleet topology", () => {
   const css = readFileSync(new URL("../../web/src/landing.css", import.meta.url), "utf8");
-  const CENTRE = "translate(-50%, -50%)";
+  const landing = readFileSync(new URL("../../web/src/pages/Landing.tsx", import.meta.url), "utf8");
 
-  /** Classes that both centre themselves and hand themselves to an animation. */
-  function centredAnimations(): Array<{ selector: string; keyframes: string }> {
-    const out: Array<{ selector: string; keyframes: string }> = [];
-    for (const [, selector, body] of css.matchAll(/([^{}@]+)\{([^{}]*)\}/g)) {
-      if (!body.includes(CENTRE)) continue;
-      const animation = body.match(/\banimation:\s*([\w-]+)/);
-      if (animation) out.push({ selector: selector.trim(), keyframes: animation[1] });
-    }
-    return out;
-  }
-
-  it("finds the centred, animated elements it is meant to be watching", () => {
-    // If this ever drops to zero the rest of the suite passes vacuously.
-    const found = centredAnimations();
-    expect(found.length).toBeGreaterThan(0);
-    expect(found.map((f) => f.keyframes)).toContain("bob");
+  it("names the agents and the orchestrator instead of depicting anonymous craft", () => {
+    expect(landing).toContain('className="fleet-topology"');
+    expect(landing).toContain("ORCHESTRATOR");
+    expect(landing).toContain("ANY A2A SKILL");
+    expect(landing).not.toContain("&lt;=&gt;");
   });
 
-  it("keeps the centring in every frame that sets a transform", () => {
-    for (const { selector, keyframes } of centredAnimations()) {
-      const block = css.match(new RegExp(`@keyframes\\s+${keyframes}\\s*\\{([\\s\\S]*?)\\n\\}`));
-      expect(block, `no @keyframes ${keyframes} for ${selector}`).toBeTruthy();
-      const transforms = [...(block?.[1] ?? "").matchAll(/transform:\s*([^;]+);/g)];
-      expect(transforms.length, `@keyframes ${keyframes} sets no transform`).toBeGreaterThan(0);
-      for (const [, value] of transforms) {
-        expect(value, `@keyframes ${keyframes} drops the centring from ${selector}`).toContain(
-          CENTRE,
-        );
-      }
-    }
+  it("moves only the message dashes and stops them for reduced motion", () => {
+    const route = css.match(/\.topology-route\s*\{([^}]*)\}/);
+    expect(route?.[1]).toContain("animation: topology-flow");
+    expect(css).toContain(".site .topology-route");
+    expect(css).toMatch(/@keyframes topology-flow\s*\{\s*to\s*\{\s*stroke-dashoffset:/);
   });
 });
 
