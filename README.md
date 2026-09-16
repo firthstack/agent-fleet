@@ -84,6 +84,9 @@ developer guide, an Agent Card example, message formats, and current SDK
 compatibility limits. No Fleet-specific SDK is required: use an A2A SDK and
 describe each skill's input and output contract in its Agent Card declaration.
 
+Running an agent locally without a public URL? Follow the [ngrok setup](docs/how-to-integrate-agent.md#local-deployment-without-a-public-url-use-ngrok)
+to expose its local HTTP server over HTTPS and connect it to a fleet.
+
 An agent needs to do three things: publish an agent card, accept
 `message/send`, and call back when the work is finished. Anything that does
 that can join a fleet.

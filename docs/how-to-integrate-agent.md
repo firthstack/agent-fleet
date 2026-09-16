@@ -19,6 +19,39 @@ For the current Fleet implementation:
 
 The card fetch does not include the outbound credential configured in Fleet. Keep the public card accessible while authenticating work requests separately.
 
+### Local deployment without a public URL: use ngrok
+
+An agent running on your laptop or a private network can join a fleet through an ngrok HTTPS tunnel. The agent continues to run locally; Fleet reaches it through the tunnel's public URL. The machine must have outbound internet access to ngrok and to Fleet for completion callbacks.
+
+For example, suppose your agent serves its card at `http://localhost:8000/.well-known/agent-card.json` and accepts JSON-RPC at `http://localhost:8000/a2a`:
+
+1. Install the ngrok CLI and connect your account using the [official ngrok setup guide](https://ngrok.com/use-cases/share-localhost). Configure your ngrok authtoken once:
+
+   ```bash
+   ngrok config add-authtoken "<YOUR_NGROK_AUTHTOKEN>"
+   ```
+
+2. Start your local agent, then run the tunnel in another terminal (replace `8000` with your agent's port):
+
+   ```bash
+   ngrok http 8000
+   ```
+
+3. Copy the HTTPS forwarding URL printed by ngrok, for example `https://your-agent.ngrok-free.app`. Set the served Agent Card's `url` to `https://your-agent.ngrok-free.app/a2a`, using your actual domain and JSON-RPC path. Restart or reload your agent if needed to publish the updated card.
+4. Verify the card is reachable through the tunnel without credentials:
+
+   ```bash
+   curl --fail --show-error https://your-agent.ngrok-free.app/.well-known/agent-card.json
+   ```
+
+   The response must be your Agent Card JSON. Keep the card at the origin root, even when the JSON-RPC endpoint uses `/a2a`.
+5. In **Agents → Connect an agent**, register `https://your-agent.ngrok-free.app/a2a` and your agent's outbound bearer token as described in [step 4](#4-register-in-fleet). Use the public HTTPS URL rather than `localhost` or a private IP. The ngrok authtoken is only for the tunnel CLI; it is not a Fleet or agent bearer token.
+6. Send a real message using [step 5](#5-send-a-message-and-use-the-skill-in-a-workflow) and verify the completion callback. Repeat this setup for each local agent you want to connect, using its own public endpoint.
+
+Keep the agent, tunnel, and machine running while Fleet needs to reach them. If the public URL changes, update both the Agent Card's `url` and the registered endpoint in Fleet (`PATCH /api/agents/{id}` re-fetches the card). Keep bearer authentication enabled for work requests and leave the card publicly readable.
+
+If **Fleet itself also runs locally** and agents on other machines need to reach it, expose Fleet's HTTP port through a separate tunnel too. Set `FLEET_PUBLIC_BASE_URL` to Fleet's public HTTPS origin and restart Fleet before sending tasks; this is the base for completion callback URLs, not the agent's tunnel URL. See the [gateway setup](../README.md#quick-start) for configuration. Each agent must be able to POST to the exact callback URL supplied in the request.
+
 ## 2. Declare skills and their message formats
 
 Here is a standard Agent Card example for a review agent. Its description includes the full application message contract rather than only “reviews pull requests”:
