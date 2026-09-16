@@ -11,6 +11,10 @@ SDKs and there is no proprietary client to adopt. Your agents stay in their own
 repos, in whatever language you like; the fleet only needs the URL of something
 that publishes an agent card.
 
+The current implementation supports a subset of A2A and has wire-format
+compatibility gaps with strict SDKs. See the [integration guide](docs/how-to-integrate-agent.md#current-sdk-compatibility-limits)
+before connecting an existing A2A server.
+
 > **First release (0.1.0).** Everything described below works and is covered by
 > tests. See [Status](#status) for what is deliberately not here yet.
 
@@ -75,6 +79,11 @@ agents call back to an address that never reaches you.
 
 ## Connecting an agent
 
+See [How to integrate an agent](docs/how-to-integrate-agent.md) for the complete
+developer guide, an Agent Card example, message formats, and current SDK
+compatibility limits. No Fleet-specific SDK is required: use an A2A SDK and
+describe each skill's input and output contract in its Agent Card declaration.
+
 An agent needs to do three things: publish an agent card, accept
 `message/send`, and call back when the work is finished. Anything that does
 that can join a fleet.
@@ -84,10 +93,10 @@ an SSRF policy (private ranges, IPv4-in-IPv6, per-hop revalidation, DNS
 rebinding), stores the skills it advertises, and issues an inbound token —
 **shown once**, because only its hash is kept.
 
-Skills that declare an `inputSchema` get it enforced: a payload that does not
-match is refused before anything is dispatched, with one line per offending
-field. Without that check a typo travels all the way to the agent and comes
-back hours later as a failed callback.
+Skills can declare Fleet's optional `inputSchema` field for machine-readable
+validation. The console checks a single structured payload before dispatch,
+with one issue per offending field, and the workflow editor provides advisory
+checks. Agents must still validate incoming messages themselves.
 
 ## Composing agents
 
@@ -113,8 +122,9 @@ curl -X POST $SITE/a2a/t/$TENANT/workflows/develop-review-merge/runs \
   -d '{"payload":{"requirement":"Fix login"},"sourceRef":"issue-9"}'
 ```
 
-A published definition is a version, and an in-flight run stays bound to the
-version it started on — so editing is safe.
+A run stays bound to the definition version it started on. Publish changes
+with a new version number: publishing the same version again overwrites its
+stored definition and can affect active runs.
 
 ## Deploying on InstaCloud
 
@@ -252,8 +262,7 @@ Deliberately not in this release:
   not need a data migration.
 - **Billing.** No schema reserved for it.
 
-Known gaps, tracked in the design docs: agent health is written at
-registration and never refreshed (there is no background sweep yet), and a run
+Known gaps, tracked in the design docs: a run
 whose very first dispatch fails *transiently* — the agent was unreachable — is
 created with no task behind it to retry, so it stays where it is. A step that
 names a skill nothing offers no longer does that: it ends the run.
@@ -269,8 +278,9 @@ other people's infrastructure, that is worth the extra paragraph.
 
 ## Design docs
 
-These carry the reasoning, and the deviations found while building:
+Developer guide: [How to integrate an agent](docs/how-to-integrate-agent.md).
+
+These describe the current implementation:
 
 - [docs/fleet-a2a-gateway.md](docs/fleet-a2a-gateway.md) — transport, tenancy, the callback chain
 - [docs/fleet-composition-layer.md](docs/fleet-composition-layer.md) — the workflow state machine
-- [docs/fleet-console.md](docs/fleet-console.md) — identity, the three surfaces, and the console's phases
